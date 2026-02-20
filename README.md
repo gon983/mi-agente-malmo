@@ -231,6 +231,41 @@ Las misiones se definen en archivos XML. Ver ejemplos en:
 ### Error de schemas
 - Verificar MALMO_XSD_PATH apunte a la carpeta correcta
 
+### Error: AssertionError en malmoenv (VideoProducer faltante)
+**Este es el error más común.** Si ves un error como:
+```
+ERROR: AssertionError
+```
+en `malmoenv/core.py`, significa que tu misión XML no tiene el elemento `VideoProducer`.
+
+**Solución:** Agregar `VideoProducer` dentro de `AgentHandlers`:
+```xml
+<AgentHandlers>
+  <!-- ... otros handlers ... -->
+  
+  <VideoProducer want_depth="false">
+    <Width>320</Width>
+    <Height>240</Height>
+  </VideoProducer>
+  
+  <!-- ... más handlers ... -->
+</AgentHandlers>
+```
+
+### La misión no carga / El agente se queda esperando
+Si el agente se conecta pero no recibe observaciones:
+1. Verificar que la misión XML tenga estructura válida
+2. Asegurar que includes `MissionQuitCommands` en `AgentHandlers`
+3. Verificar que `ContinuousMovementCommands` no tenga `ModifierList` restrictivo
+4. Ver los ejemplos en `c:\Users\gonza\malmo\MalmoEnv\missions\` como referencia
+
+### Estructura XML correcta para malmoenv
+Para que una misión funcione con `malmoenv`, requiere obligatoriamente:
+1. Elemento `VideoProducer` con Width y Height
+2. Estructura XML con namespaces correctos
+
+Ver `missions/simple_test.xml` para un ejemplo funcional.
+
 ---
 
 *Creado para entrenamiento de agentes con Microsoft Malmo*
