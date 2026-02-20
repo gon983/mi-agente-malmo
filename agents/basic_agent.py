@@ -158,12 +158,22 @@ class BasicAgent:
         jump = 1.0 if random.random() < jump_probability else 0.0
         return {"move": move, "turn": turn, "jump": jump}
 
+    def _resolve_jump(self, cfg: Dict[str, Any]) -> float:
+        jump_probability = cfg.get("jump_probability")
+        if jump_probability is not None:
+            try:
+                probability = max(0.0, min(1.0, float(jump_probability)))
+            except (TypeError, ValueError):
+                probability = 0.0
+            return 1.0 if random.random() < probability else 0.0
+        return float(cfg.get("jump", 0.0))
+
     def _forward_action(self) -> Dict[str, float]:
         cfg = self.agent_params.get("actions", {}).get("forward", {})
         return {
             "move": float(cfg.get("move", 1.0)),
             "turn": float(cfg.get("turn", 0.0)),
-            "jump": float(cfg.get("jump", 0.0)),
+            "jump": self._resolve_jump(cfg),
         }
 
     def _explore_action(self, observation: Optional[Dict[str, Any]]) -> Dict[str, float]:
@@ -175,7 +185,7 @@ class BasicAgent:
             return {
                 "move": 0.0,
                 "turn": float(random.choice(turn_choices)),
-                "jump": float(cfg.get("jump", 0.0)),
+                "jump": self._resolve_jump(cfg),
             }
 
         return {
@@ -184,7 +194,7 @@ class BasicAgent:
                 float(cfg.get("turn_jitter_min", -0.2)),
                 float(cfg.get("turn_jitter_max", 0.2)),
             ),
-            "jump": float(cfg.get("jump", 0.0)),
+            "jump": self._resolve_jump(cfg),
         }
 
     def process_observation(self, observation: Optional[Dict[str, Any]]) -> None:

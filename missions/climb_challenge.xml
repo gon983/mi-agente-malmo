@@ -46,7 +46,7 @@
   <AgentSection mode="Survival">
     <Name>Agente</Name>
     <AgentStart>
-      <Placement x="0.5" y="227.0" z="0.5" yaw="0" pitch="0"/>
+      <Placement x="0.5" y="228.0" z="0.5" yaw="0" pitch="0"/>
       <Inventory>
         <InventoryBlock slot="0" type="dirt" quantity="32"/>
       </Inventory>

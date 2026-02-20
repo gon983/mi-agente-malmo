@@ -1,6 +1,6 @@
 run:
-  episodes: 5
-  max_steps: 50
+  episodes: 1
+  max_steps: 1000
 
 behavior:
   policy: "explore"
@@ -17,7 +17,7 @@ actions:
   forward:
     move: 1.0
     turn: 0.0
-    jump: 0.0
+    jump: 1.0
   explore:
     turn_interval: 10
     turn_choices: [-1.0, 1.0]
@@ -25,6 +25,7 @@ actions:
     turn_jitter_min: -0.2
     turn_jitter_max: 0.2
     jump: 0.0
+    jump_probability: 0.35
 
 termination:
   death_on_zero_life: true

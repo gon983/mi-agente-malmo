@@ -7,7 +7,7 @@ Maneja la comunicación entre el agente y Minecraft via malmoenv.
 import time
 import logging
 from pathlib import Path
-from typing import Dict, Any, Optional, Tuple, List
+from typing import Dict, Any, Optional, Tuple, List, Set
 
 try:
     import malmoenv
@@ -34,7 +34,8 @@ class MalmoConnector:
                  experiment_id: str = "experiment",
                  episode: int = 0,
                  resync: int = 0,
-                 reshape: bool = True):
+                 reshape: bool = True,
+                 action_filter: Optional[Set[str]] = None):
         """
         Inicializa el conector Malmo.
         
@@ -54,6 +55,13 @@ class MalmoConnector:
         self.episode = episode
         self.resync = resync
         self.reshape = reshape
+        self.action_filter = set(action_filter) if action_filter else {
+            "move",
+            "turn",
+            "jump",
+            "use",
+            "attack",
+        }
         
         # Cargar misión XML
         self.mission_xml = self._load_mission(mission_xml)
@@ -107,8 +115,16 @@ class MalmoConnector:
                 exp_uid=self.experiment_id,
                 episode=self.episode,
                 resync=self.resync,
+                action_filter=self.action_filter,
                 reshape=self.reshape
             )
+
+            actions = getattr(getattr(self.env, "action_space", None), "actions", None)
+            if isinstance(actions, list):
+                preview = ", ".join(actions[:10])
+                if len(actions) > 10:
+                    preview += ", ..."
+                print(f"Action space ({len(actions)}): {preview}")
             
             self.connected = True
             print("Connection established.")
