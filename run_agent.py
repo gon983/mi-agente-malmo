@@ -6,6 +6,9 @@ Uso:
     python run_agent.py
     python run_agent.py --episodes 10 --policy explore
     python run_agent.py --mission missions/simple_test.xml --port 9000
+    python run_agent.py --viewer terminal
+    python run_agent.py --viewer grafico
+    python run_agent.py --viewer full
 """
 
 import os
@@ -27,6 +30,8 @@ except ImportError:
 
 from agents.basic_agent import BasicAgent
 from utils.malmo_connector import MalmoConnector
+from utils.agent_viewer import create_viewer, AgentViewer, SimpleViewer
+from utils.graphical_viewer import create_graphical_viewer, GraphicalViewer
 
 
 def load_config(config_path: str = "config/config.yaml") -> dict:
@@ -91,16 +96,47 @@ def setup_logging(config: dict) -> None:
     )
 
 
+def parse_observation(obs) -> dict:
+    """
+    Parsea la observación del entorno a un diccionario.
+    
+    Args:
+        obs: Observación del entorno (puede ser array, dict, etc.)
+        
+    Returns:
+        Diccionario con datos de observación
+    """
+    if obs is None:
+        return {}
+    
+    # Si ya es un diccionario
+    if isinstance(obs, dict):
+        return obs
+    
+    # Si es un array numpy (frame)
+    if hasattr(obs, 'shape'):
+        # Intentar extraer información adicional si está disponible
+        return {'frame_shape': obs.shape, 'raw_obs': obs}
+    
+    # Si tiene atributos
+    if hasattr(obs, '__dict__'):
+        return obs.__dict__
+    
+    return {'raw': obs}
+
+
 def run_episode(connector: MalmoConnector, 
                 agent: BasicAgent, 
-                max_steps: int = 100) -> dict:
+                max_steps: int = 100,
+                viewer = None) -> dict:
     """
-    Ejecuta un episodio del agente.
+    Ejecuta un episodio del agente con visualización.
     
     Args:
         connector: Conector Malmo
         agent: Agente a ejecutar
         max_steps: Máximo número de pasos
+        viewer: Visualizador (opcional)
         
     Returns:
         Diccionario con estadísticas del episodio
@@ -113,19 +149,95 @@ def run_episode(connector: MalmoConnector,
     step = 0
     
     while not done and step < max_steps:
+        # Parsear observación
+        obs_dict = parse_observation(obs)
+        
         # Obtener acción del agente
-        action = agent.get_action(obs)
+        action = agent.get_action(obs_dict)
         
         # Ejecutar acción
         obs, reward, done, info = connector.step(action)
         
+        # Parsear nueva observación
+        new_obs_dict = parse_observation(obs)
+        
         # Procesar resultados
         agent.process_reward(reward)
+        
+        # Actualizar visualización
+        if viewer:
+            viewer.update_step(
+                step=step + 1,
+                action=action,
+                observation=new_obs_dict,
+                reward=reward,
+                total_reward=agent.total_reward
+            )
+            
+            # Verificar si el viewer sigue activo (para Pygame)
+            if hasattr(viewer, 'is_running') and not viewer.is_running():
+                print("\n⚠️  Visualización cerrada por el usuario.")
+                break
         
         step += 1
         time.sleep(agent.action_delay)
     
     return agent.episode_summary()
+
+
+def create_viewer_by_type(viewer_type: str):
+    """
+    Crea el visualizador según el tipo especificado.
+    
+    Args:
+        viewer_type: 'terminal', 'grafico', 'full', o 'none'
+        
+    Returns:
+        Instancia del visualizador o None
+    """
+    if viewer_type == 'none' or viewer_type is None:
+        return None
+    
+    if viewer_type == 'terminal':
+        return create_viewer(use_rich=True)
+    
+    if viewer_type == 'grafico':
+        return create_graphical_viewer(pygame=True, matplotlib=True)
+    
+    if viewer_type == 'full':
+        # Combinado: terminal Rich + gráficos
+        class CombinedViewer:
+            """Visualizador combinado terminal + gráfico."""
+            
+            def __init__(self):
+                self.terminal = create_viewer(use_rich=True)
+                self.graphic = create_graphical_viewer(pygame=True, matplotlib=False)
+                
+            def start(self, total_episodes, max_steps, policy):
+                self.terminal.start(total_episodes, max_steps, policy)
+                self.graphic.start(total_episodes, max_steps, policy)
+                
+            def start_episode(self, episode):
+                self.terminal.start_episode(episode)
+                self.graphic.start_episode(episode)
+                
+            def update_step(self, step, action, observation, reward, total_reward):
+                self.terminal.update_step(step, action, observation, reward, total_reward)
+                self.graphic.update_step(step, action, observation, reward, total_reward)
+                
+            def end_episode(self):
+                self.terminal.end_episode()
+                self.graphic.end_episode()
+                
+            def close(self):
+                self.graphic.close()
+                
+            def is_running(self):
+                return self.graphic.is_running()
+        
+        return CombinedViewer()
+    
+    return None
 
 
 def main():
@@ -144,6 +256,9 @@ def main():
     parser.add_argument('--policy', type=str, default=None,
                         choices=['random', 'forward', 'explore'],
                         help='Política del agente')
+    parser.add_argument('--viewer', type=str, default='none',
+                        choices=['none', 'terminal', 'grafico', 'full'],
+                        help='Tipo de visualización: none, terminal (Rich), grafico (Pygame+Matplotlib), full (ambos)')
     
     args = parser.parse_args()
     
@@ -173,6 +288,7 @@ def main():
     print(f"Política: {config['agent']['policy']}")
     print(f"Episodios: {config['agent']['episodes']}")
     print(f"Max pasos: {config['agent']['max_steps']}")
+    print(f"Visualización: {args.viewer}")
     print("="*60)
     
     # Verificar que Minecraft esté corriendo
@@ -201,34 +317,58 @@ def main():
     agent = BasicAgent(
         policy=config['agent']['policy'],
         action_delay=config['agent']['action_delay'],
-        verbose=True
+        verbose=(args.viewer == 'none')  # Solo verbose si no hay viewer
     )
+    
+    # Crear visualizador
+    viewer = create_viewer_by_type(args.viewer)
+    
+    if viewer:
+        viewer.start(
+            total_episodes=config['agent']['episodes'],
+            max_steps=config['agent']['max_steps'],
+            policy=config['agent']['policy']
+        )
     
     # Ejecutar episodios
     all_stats = []
     
     try:
         for episode in range(config['agent']['episodes']):
-            print(f"\n{'='*60}")
-            print(f"EPISODIO {episode + 1}/{config['agent']['episodes']}")
-            print('='*60)
+            # Iniciar episodio en viewer
+            if viewer:
+                viewer.start_episode(episode + 1)
+            else:
+                print(f"\n{'='*60}")
+                print(f"EPISODIO {episode + 1}/{config['agent']['episodes']}")
+                print('='*60)
             
             stats = run_episode(
                 connector, 
                 agent, 
-                max_steps=config['agent']['max_steps']
+                max_steps=config['agent']['max_steps'],
+                viewer=viewer
             )
             all_stats.append(stats)
             
-            print(f"\n📊 Resumen del episodio:")
-            print(f"   Pasos: {stats['steps']}")
-            print(f"   Recompensa total: {stats['total_reward']:.2f}")
-            print(f"   Recompensa promedio: {stats['avg_reward']:.4f}")
+            # Finalizar episodio en viewer
+            if viewer:
+                viewer.end_episode()
+            
+            # Mostrar resumen del episodio
+            if args.viewer == 'none':
+                print(f"\n📊 Resumen del episodio:")
+                print(f"   Pasos: {stats['steps']}")
+                print(f"   Recompensa total: {stats['total_reward']:.2f}")
+                print(f"   Recompensa promedio: {stats['avg_reward']:.4f}")
     
     except KeyboardInterrupt:
         print("\n\n⚠️  Detenido por el usuario.")
     
     finally:
+        # Cerrar visualizador
+        if viewer:
+            viewer.close()
         connector.close()
     
     # Resumen final

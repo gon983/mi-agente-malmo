@@ -57,6 +57,60 @@ cd C:\Users\gonza\agentedemalmo
 python run_agent.py
 ```
 
+### Opciones de Visualización
+
+El agente ahora soporta diferentes modos de visualización en tiempo real:
+
+```bash
+# Sin visualización (solo logs)
+python run_agent.py --viewer none
+
+# Visualización en terminal (Rich)
+python run_agent.py --viewer terminal
+
+# Visualización gráfica (Pygame + Matplotlib)
+python run_agent.py --viewer grafico
+
+# Visualización completa (terminal + gráfica)
+python run_agent.py --viewer full
+```
+
+#### Visualización Terminal (Rich)
+
+Muestra en la terminal:
+- Estado del episodio y paso actual
+- Posición (X, Y, Z) con indicador de altura
+- Barra de vida
+- Acciones en tiempo real (move, turn, jump)
+- Recompensas y totales
+- Historial de últimos pasos
+- Estadísticas de velocidad y tiempo
+
+#### Visualización Gráfica (Pygame + Matplotlib)
+
+**Mini-mapa Pygame:**
+- Trayectoria del agente en 2D (vista desde arriba X,Z)
+- Color codificado por altura Y:
+  - 🟢 Verde: En suelo
+  - 🟡 Amarillo: Saltando
+  - 🟠 Naranja: Elevado
+  - 🔵 Azul: Cayendo
+- Panel de estadísticas en tiempo real
+- Brújula y leyenda de colores
+
+**Gráficos Matplotlib:**
+- Recompensa acumulada vs pasos
+- Altura Y a lo largo del tiempo
+- Trayectoria (X,Z) con gradiente temporal
+- Mapa de calor de posiciones
+
+#### Probar la Visualización sin Minecraft
+
+```bash
+# Prueba rápida con datos simulados
+python test_viewer.py --viewer grafico --episodes 1 --max-steps 30
+```
+
 ---
 
 ## 📁 Estructura del Proyecto
