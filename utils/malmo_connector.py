@@ -7,7 +7,7 @@ Maneja la comunicación entre el agente y Minecraft via malmoenv.
 import time
 import logging
 from pathlib import Path
-from typing import Dict, Any, Optional, Tuple
+from typing import Dict, Any, Optional, Tuple, List
 
 try:
     import malmoenv
@@ -33,7 +33,8 @@ class MalmoConnector:
                  role: int = 0,
                  experiment_id: str = "experiment",
                  episode: int = 0,
-                 resync: int = 0):
+                 resync: int = 0,
+                 reshape: bool = True):
         """
         Inicializa el conector Malmo.
         
@@ -52,6 +53,7 @@ class MalmoConnector:
         self.experiment_id = experiment_id
         self.episode = episode
         self.resync = resync
+        self.reshape = reshape
         
         # Cargar misión XML
         self.mission_xml = self._load_mission(mission_xml)
@@ -89,7 +91,7 @@ class MalmoConnector:
             True si la conexión fue exitosa
         """
         try:
-            print(f"Conectando a Malmo en {self.server}:{self.port}...")
+            print(f"Connecting to Malmo at {self.server}:{self.port}...")
             
             # Crear entorno
             self.env = malmoenv.make()
@@ -104,15 +106,16 @@ class MalmoConnector:
                 role=self.role,
                 exp_uid=self.experiment_id,
                 episode=self.episode,
-                resync=self.resync
+                resync=self.resync,
+                reshape=self.reshape
             )
             
             self.connected = True
-            print("✓ Conexión exitosa!")
+            print("Connection established.")
             return True
             
         except Exception as e:
-            print(f"✗ Error al conectar: {e}")
+            print(f"Connection error: {e}")
             self.connected = False
             return False
     
@@ -159,29 +162,69 @@ class MalmoConnector:
         Returns:
             Array de acciones compatible con el entorno
         """
-        # malmoenv usa action_space.sample() para obtener el formato
-        # Por ahora usamos action_space para determinar el formato
         if hasattr(self.env, 'action_space'):
-            # Crear acción base
-            action = self.env.action_space.sample()
-            
-            # Asignar valores del diccionario si es posible
-            if hasattr(action, '__len__'):
-                # Array de acciones continuas: [move, turn, jump, ...]
-                action_list = list(action)
+            action_space = self.env.action_space
+            actions = getattr(action_space, "actions", None)
+
+            # malmoenv commonly uses a discrete action space with string commands.
+            if isinstance(actions, list) and len(actions) > 0:
+                return self._dict_to_discrete_index(action_dict, actions, action_space.sample)
+
+            # Fallback for continuous-like spaces.
+            sampled = action_space.sample()
+            if hasattr(sampled, '__len__'):
+                action_list = list(sampled)
                 action_list[0] = action_dict.get('move', 0.0)
                 if len(action_list) > 1:
                     action_list[1] = action_dict.get('turn', 0.0)
                 if len(action_list) > 2:
                     action_list[2] = action_dict.get('jump', 0.0)
                 return action_list
-            
-            return action
-        
-        # Fallback: retornar array simple
-        return [action_dict.get('move', 0.0), 
-                action_dict.get('turn', 0.0),
-                action_dict.get('jump', 0.0)]
+            return sampled
+
+        # Last resort.
+        return [action_dict.get('move', 0.0), action_dict.get('turn', 0.0), action_dict.get('jump', 0.0)]
+
+    def _dict_to_discrete_index(self, action_dict: Dict[str, float], actions: List[str], sample_fn) -> int:
+        """
+        Convert move/turn/jump values into the closest discrete Malmo command index.
+        """
+        index_by_cmd = {cmd: idx for idx, cmd in enumerate(actions)}
+        move = float(action_dict.get("move", 0.0))
+        turn = float(action_dict.get("turn", 0.0))
+        jump = float(action_dict.get("jump", 0.0))
+
+        candidates = []
+
+        # Keep movement priority, then turn, then jump.
+        if move > 0.1:
+            candidates.append("move 1")
+        elif move < -0.1:
+            candidates.append("move -1")
+
+        if turn > 0.1:
+            candidates.append("turn 1")
+        elif turn < -0.1:
+            candidates.append("turn -1")
+
+        if jump > 0.5:
+            candidates.insert(0, "jump 1")
+
+        # Neutral commands as soft fallback.
+        candidates.extend(["jump 0", "turn 0", "move 0"])
+
+        for command in candidates:
+            if command in index_by_cmd:
+                return index_by_cmd[command]
+
+        # If exact commands are not available, prefer partial command matches.
+        for command in candidates:
+            root = command.split(" ")[0]
+            for idx, action in enumerate(actions):
+                if action.startswith(root + " "):
+                    return idx
+
+        return sample_fn()
     
     def close(self) -> None:
         """Cierra la conexión con Malmo."""
@@ -191,7 +234,7 @@ class MalmoConnector:
             except:
                 pass
         self.connected = False
-        print("Conexión cerrada.")
+        print("Connection closed.")
     
     def get_observation_info(self, obs: Any) -> Dict[str, Any]:
         """

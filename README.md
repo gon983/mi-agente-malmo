@@ -1,325 +1,58 @@
-# 🎮 Agente de Malmo
+# Malmo Agent
 
-Proyecto para entrenar agentes de inteligencia artificial utilizando Microsoft Malmo y Minecraft.
+Proyecto para correr un agente base en Microsoft Malmo con configuracion desacoplada y visualizacion en tiempo real.
 
----
+## Estructura
 
-## 📋 Requisitos Previos Instalados
+```
+agentedemalmo/
+|-- agents/
+|   `-- basic_agent.py
+|-- config/
+|   |-- config.yaml
+|   |-- world_rules.yaml
+|   `-- agent_params.yaml
+|-- missions/
+|   |-- simple_test.xml
+|   `-- climb_challenge.xml
+|-- utils/
+|   |-- malmo_connector.py
+|   `-- viewer_3d.py
+`-- run_agent.py
+```
 
-### Software del Sistema
+## Configuracion
 
-| Software | Versión | Ubicación | Propósito |
-|----------|---------|-----------|-----------|
-| **Java JDK 8** | 8.0.482.8-hotspot | `C:\Program Files\Eclipse Adoptium\jdk-8.0.482.8-hotspot` | Minecraft/Forge |
-| **FFmpeg** | 8.0.1 (Gyan) | Instalado via winget | Codificación de video |
-| **Python** | 3.13 | Sistema | Lenguaje principal |
-| **malmoenv** | 0.0.8 | `C:\Users\gonza\AppData\Roaming\Python\Python313\site-packages` | Librería Malmo para Python |
-| **gymnasium** | 1.2.3 | `C:\Users\gonza\AppData\Roaming\Python\Python313\site-packages` | Reemplazo moderno de OpenAI Gym |
+- `config/world_rules.yaml`: variables del entorno/mundo (mision, objetivo, terreno, recompensas).
+- `config/agent_params.yaml`: variables del agente (politica, acciones, termination, run).
+- `config/config.yaml`: runtime (rutas de YAML, host/port Malmo, logging).
 
-### Variables de Entorno Configuradas
+## Ejecutar
 
-| Variable | Valor |
-|----------|-------|
-| `JAVA_HOME` | `C:\Program Files\Eclipse Adoptium\jdk-8.0.482.8-hotspot` |
-| `MALMO_XSD_PATH` | `c:\Users\gonza\malmo\Schemas` |
-| `PATH` | Incluye FFmpeg y Java |
-
-### Proyecto Malmo Base
-
-| Componente | Ubicación |
-|------------|-----------|
-| Repositorio Malmo | `c:\Users\gonza\malmo` |
-| Schemas XML | `c:\Users\gonza\malmo\Schemas\` |
-| Misiones de ejemplo | `c:\Users\gonza\malmo\MalmoEnv\missions\` |
-| Minecraft con MalmoMod | `c:\Users\gonza\malmo\Minecraft\` |
-
----
-
-## 🚀 Cómo Usar Este Proyecto
-
-### Paso 1: Iniciar Minecraft con MalmoMod
-
-Abre una terminal y ejecuta:
+1. Iniciar Minecraft Malmo:
 
 ```bash
 cd c:\Users\gonza\malmo\Minecraft
 launchClient.bat -port 9000 -env
 ```
 
-Esto abrirá Minecraft con el mod de Malmo escuchando en el puerto 9000.
-
-### Paso 2: Ejecutar el Agente
-
-En otra terminal:
+2. Correr el agente:
 
 ```bash
-cd C:\Users\gonza\agentedemalmo
+cd c:\Users\gonza\agentedemalmo
 python run_agent.py
 ```
 
-### Opciones de Visualización
+## Viewer modes
 
-El agente ahora soporta diferentes modos de visualización en tiempo real:
+- `--viewer none`: sin visualizacion.
+- `--viewer terminal`: salida minimalista en terminal.
+- `--viewer full`: panel unico con video de Malmo + metricas/agente/entorno + graficos de reward/altura + trayectoria.
+
+Ejemplos:
 
 ```bash
-# Sin visualización (solo logs)
-python run_agent.py --viewer none
-
-# Visualización en terminal (Rich)
 python run_agent.py --viewer terminal
-
-# Visualización gráfica (Pygame + Matplotlib)
-python run_agent.py --viewer grafico
-
-# Visualización completa (terminal + gráfica)
 python run_agent.py --viewer full
+python run_agent.py --policy explore --episodes 3 --max-steps 80
 ```
-
-#### Visualización Terminal (Rich)
-
-Muestra en la terminal:
-- Estado del episodio y paso actual
-- Posición (X, Y, Z) con indicador de altura
-- Barra de vida
-- Acciones en tiempo real (move, turn, jump)
-- Recompensas y totales
-- Historial de últimos pasos
-- Estadísticas de velocidad y tiempo
-
-#### Visualización Gráfica (Pygame + Matplotlib)
-
-**Mini-mapa Pygame:**
-- Trayectoria del agente en 2D (vista desde arriba X,Z)
-- Color codificado por altura Y:
-  - 🟢 Verde: En suelo
-  - 🟡 Amarillo: Saltando
-  - 🟠 Naranja: Elevado
-  - 🔵 Azul: Cayendo
-- Panel de estadísticas en tiempo real
-- Brújula y leyenda de colores
-
-**Gráficos Matplotlib:**
-- Recompensa acumulada vs pasos
-- Altura Y a lo largo del tiempo
-- Trayectoria (X,Z) con gradiente temporal
-- Mapa de calor de posiciones
-
-#### Probar la Visualización sin Minecraft
-
-```bash
-# Prueba rápida con datos simulados
-python test_viewer.py --viewer grafico --episodes 1 --max-steps 30
-```
-
----
-
-## 📁 Estructura del Proyecto
-
-```
-agentedemalmo/
-├── README.md                 # Esta documentación
-├── requirements.txt          # Dependencias Python
-├── config/
-│   └── config.yaml          # Configuración del agente
-├── agents/
-│   ├── __init__.py
-│   └── basic_agent.py       # Agente minimalista
-├── missions/
-│   └── simple_test.xml      # Misiones personalizadas
-├── utils/
-│   ├── __init__.py
-│   └── malmo_connector.py   # Conector con Malmo
-├── logs/                    # Logs de entrenamiento
-└── models/                  # Modelos guardados
-```
-
-### Descripción de Carpetas
-
-| Carpeta | Propósito |
-|---------|-----------|
-| `config/` | Archivos de configuración YAML para el agente |
-| `agents/` | Implementaciones de agentes (RL, básicos, etc.) |
-| `missions/` | Archivos XML con definiciones de misiones |
-| `utils/` | Utilidades y conectores |
-| `logs/` | Logs generados durante entrenamiento |
-| `models/` | Modelos entrenados guardados |
-
----
-
-## 🔧 Configuración del Agente
-
-El archivo `config/config.yaml` contiene todos los parámetros configurables:
-
-```yaml
-malmo:
-  port: 9000
-  server: "127.0.0.1"
-  mission: "missions/simple_test.xml"
-
-agent:
-  type: "basic"  # basic, dqn, ppo, etc.
-  episodes: 10
-  max_steps: 100
-
-logging:
-  level: "INFO"
-  save_rewards: true
-```
-
----
-
-## 🤖 Tipos de Agentes
-
-### Agente Básico (`basic_agent.py`)
-
-Agente minimalista que:
-- Se conecta a Minecraft/Malmo
-- Toma acciones aleatorias
-- Muestra observaciones y recompensas
-- Útil como base para agentes más complejos
-
-### Para crear un nuevo agente:
-
-1. Crear un nuevo archivo en `agents/` (ej: `mi_agente.py`)
-2. Heredar de la clase base o implementar interfaz
-3. Agregar configuración en `config.yaml`
-4. Importar en `run_agent.py`
-
----
-
-## 📊 Observaciones y Acciones
-
-### Espacio de Observaciones
-
-Malmo proporciona:
-- **Frame**: Imagen RGB del juego (240x320 píxeles por defecto)
-- **Life**: Vida del jugador
-- **XPos, YPos, ZPos**: Posición en el mundo
-- **Yaw, Pitch**: Orientación de la cámara
-
-### Espacio de Acciones
-
-Acciones disponibles (dependen de la misión):
-- `move` (1/-1/0): Mover adelante/atrás/quieto
-- `turn` (1/-1/0): Girar derecha/izquierda/recto
-- `attack` (0/1): Atacar
-- `use` (0/1): Usar objeto
-- `jump` (0/1): Saltar
-
----
-
-## 🎯 Misiones
-
-Las misiones se definen en archivos XML. Ver ejemplos en:
-- `missions/simple_test.xml` - Misión minimalista
-- `c:\Users\gonza\malmo\MalmoEnv\missions\` - Misiones de ejemplo
-
-### Crear una Misión
-
-```xml
-<?xml version="1.0" encoding="utf-8"?>
-<Mission xmlns="http://ProjectMalmo.microsoft.com">
-  <About>
-    <Summary>Mi misión</Summary>
-  </About>
-  <ModSettings>
-    <MsPerTick>50</MsPerTick>
-  </ModSettings>
-  <ServerSection>
-    <ServerInitialConditions>
-      <Time>
-        <StartTime>6000</StartTime>
-      </Time>
-    </ServerInitialConditions>
-    <ServerHandlers>
-      <FlatWorldGenerator generatorString="3;7,220*1,5*3,2;3;,biome_1"/>
-      <ServerQuitFromTimeUp timeLimitMs="30000"/>
-    </ServerHandlers>
-  </ServerSection>
-  <AgentSection mode="Survival">
-    <Name>Agente</Name>
-    <AgentHandlers>
-      <ObservationFromFullStats/>
-      <ContinuousMovementCommands turnSpeedDegs="180">
-        <ModifierList type="allow">
-          <command>move</command>
-          <command>turn</command>
-        </ModifierList>
-      </ContinuousMovementCommands>
-    </AgentHandlers>
-  </AgentSection>
-</Mission>
-```
-
----
-
-## 📈 Próximos Pasos
-
-1. **Agente DQN**: Implementar Deep Q-Network
-2. **Agente PPO**: Implementar Proximal Policy Optimization
-3. **Misiones complejas**: Crear misiones con objetivos específicos
-4. **Logging avanzado**: TensorBoard para visualización
-5. **Hyperparameter tuning**: Optimización de parámetros
-
----
-
-## 🔗 Recursos Útiles
-
-- [Documentación oficial de Malmo](https://microsoft.github.io/malmo/)
-- [Repositorio de Malmo](https://github.com/microsoft/malmo)
-- [OpenAI Gym (malmoenv)](https://github.com/microsoft/malmo/tree/master/MalmoEnv)
-- [Ejemplos de misiones](https://github.com/microsoft/malmo/tree/master/sample_missions)
-
----
-
-## ❓ Solución de Problemas
-
-### Minecraft no inicia
-- Verificar que JAVA_HOME esté configurado correctamente
-- Asegurar que el puerto 9000 no esté en uso
-
-### El agente no se conecta
-- Verificar que Minecraft esté corriendo con `-env` flag
-- Comprobar que el puerto coincida (default: 9000)
-
-### Error de schemas
-- Verificar MALMO_XSD_PATH apunte a la carpeta correcta
-
-### Error: AssertionError en malmoenv (VideoProducer faltante)
-**Este es el error más común.** Si ves un error como:
-```
-ERROR: AssertionError
-```
-en `malmoenv/core.py`, significa que tu misión XML no tiene el elemento `VideoProducer`.
-
-**Solución:** Agregar `VideoProducer` dentro de `AgentHandlers`:
-```xml
-<AgentHandlers>
-  <!-- ... otros handlers ... -->
-  
-  <VideoProducer want_depth="false">
-    <Width>320</Width>
-    <Height>240</Height>
-  </VideoProducer>
-  
-  <!-- ... más handlers ... -->
-</AgentHandlers>
-```
-
-### La misión no carga / El agente se queda esperando
-Si el agente se conecta pero no recibe observaciones:
-1. Verificar que la misión XML tenga estructura válida
-2. Asegurar que includes `MissionQuitCommands` en `AgentHandlers`
-3. Verificar que `ContinuousMovementCommands` no tenga `ModifierList` restrictivo
-4. Ver los ejemplos en `c:\Users\gonza\malmo\MalmoEnv\missions\` como referencia
-
-### Estructura XML correcta para malmoenv
-Para que una misión funcione con `malmoenv`, requiere obligatoriamente:
-1. Elemento `VideoProducer` con Width y Height
-2. Estructura XML con namespaces correctos
-
-Ver `missions/simple_test.xml` para un ejemplo funcional.
-
----
-
-*Creado para entrenamiento de agentes con Microsoft Malmo*

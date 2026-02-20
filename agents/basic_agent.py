@@ -1,149 +1,264 @@
 """
-Agente Básico para Microsoft Malmo
-
-Un agente minimalista que:
-- Se conecta a Minecraft/Malmo
-- Toma acciones aleatorias o simples
-- Muestra observaciones y recompensas
-- Útil como base para agentes más complejos
+Basic agent for Microsoft Malmo.
 """
 
-import random
-import time
+from __future__ import annotations
+
+import copy
 import logging
-from typing import Dict, Any, Optional, Tuple
+import random
+from pathlib import Path
+from typing import Any, Dict, Optional
+
+try:
+    import yaml
+except ImportError:
+    yaml = None
 
 logger = logging.getLogger(__name__)
 
 
+DEFAULT_WORLD_RULES: Dict[str, Any] = {
+    "objective": {
+        "target_height": 0.0,
+    }
+}
+
+DEFAULT_AGENT_PARAMS: Dict[str, Any] = {
+    "run": {
+        "episodes": 5,
+        "max_steps": 50,
+    },
+    "behavior": {
+        "policy": "random",
+        "action_delay": 0.05,
+        "verbose": True,
+    },
+    "actions": {
+        "random": {
+            "move_min": -1.0,
+            "move_max": 1.0,
+            "turn_min": -1.0,
+            "turn_max": 1.0,
+            "jump_probability": 0.25,
+        },
+        "forward": {
+            "move": 1.0,
+            "turn": 0.0,
+            "jump": 0.0,
+        },
+        "explore": {
+            "turn_interval": 10,
+            "turn_choices": [-1.0, 1.0],
+            "move": 1.0,
+            "turn_jitter_min": -0.2,
+            "turn_jitter_max": 0.2,
+            "jump": 0.0,
+        },
+    },
+    "termination": {
+        "death_on_zero_life": True,
+        "min_life": 0.0,
+    },
+}
+
+
+def _deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
+    merged = copy.deepcopy(base)
+    for key, value in (override or {}).items():
+        if (
+            key in merged
+            and isinstance(merged[key], dict)
+            and isinstance(value, dict)
+        ):
+            merged[key] = _deep_merge(merged[key], value)
+        else:
+            merged[key] = value
+    return merged
+
+
+def load_yaml_config(config_path: str, default: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """
+    Load YAML config from disk, returning defaults if file is missing.
+    """
+    default_dict = copy.deepcopy(default or {})
+    path = Path(config_path)
+
+    if not path.exists():
+        return default_dict
+
+    if yaml is None:
+        logger.warning("PyYAML is not installed. Using defaults for %s", config_path)
+        return default_dict
+
+    with path.open("r", encoding="utf-8") as handle:
+        loaded = yaml.safe_load(handle) or {}
+
+    if not isinstance(loaded, dict):
+        logger.warning("YAML root in %s is not a mapping. Using defaults.", config_path)
+        return default_dict
+
+    return _deep_merge(default_dict, loaded)
+
+
 class BasicAgent:
     """
-    Agente básico que interactúa con Malmo.
-    
-    Este agente implementa una política simple que puede ser:
-    - 'random': acciones completamente aleatorias
-    - 'forward': siempre mover hacia adelante
-    - 'explore': exploración simple alternando movimiento y giro
+    Minimal Malmo agent with configurable policy/action/termination knobs.
     """
-    
-    def __init__(self, 
-                 policy: str = 'random',
-                 action_delay: float = 0.05,
-                 verbose: bool = True):
-        """
-        Inicializa el agente básico.
-        
-        Args:
-            policy: Política a usar ('random', 'forward', 'explore')
-            action_delay: Segundos a esperar entre acciones
-            verbose: Si True, imprime información de cada paso
-        """
-        self.policy = policy
-        self.action_delay = action_delay
-        self.verbose = verbose
+
+    def __init__(
+        self,
+        policy: Optional[str] = None,
+        action_delay: Optional[float] = None,
+        verbose: Optional[bool] = None,
+        agent_params: Optional[Dict[str, Any]] = None,
+        world_rules: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        self.agent_params = _deep_merge(DEFAULT_AGENT_PARAMS, agent_params or {})
+        self.world_rules = _deep_merge(DEFAULT_WORLD_RULES, world_rules or {})
+
+        behavior_cfg = self.agent_params.get("behavior", {})
+        termination_cfg = self.agent_params.get("termination", {})
+
+        self.policy = policy if policy is not None else str(behavior_cfg.get("policy", "random"))
+        self.action_delay = float(
+            action_delay if action_delay is not None else behavior_cfg.get("action_delay", 0.05)
+        )
+        self.verbose = bool(verbose if verbose is not None else behavior_cfg.get("verbose", True))
+
+        self.death_on_zero_life = bool(termination_cfg.get("death_on_zero_life", True))
+        self.min_life = float(termination_cfg.get("min_life", 0.0))
+        self.target_height = float(
+            self.world_rules.get("objective", {}).get("target_height", 0.0)
+        )
+
         self.step_count = 0
         self.total_reward = 0.0
-        
+        self.max_height = float("-inf")
+        self.last_life: Optional[float] = None
+        self.last_observation: Dict[str, Any] = {}
+        self._is_dead = False
+
     def get_action(self, observation: Optional[Dict[str, Any]] = None) -> Dict[str, float]:
-        """
-        Retorna la siguiente acción basada en la política.
-        
-        Args:
-            observation: Observación actual del entorno (opcional)
-            
-        Returns:
-            Diccionario con las acciones (ej: {'move': 1.0, 'turn': 0.0})
-        """
         self.step_count += 1
-        
-        if self.policy == 'random':
+
+        if self.policy == "random":
             return self._random_action()
-        elif self.policy == 'forward':
+        if self.policy == "forward":
             return self._forward_action()
-        elif self.policy == 'explore':
+        if self.policy == "explore":
             return self._explore_action(observation)
-        else:
-            return self._random_action()
-    
+        return self._random_action()
+
     def _random_action(self) -> Dict[str, float]:
-        """Acción completamente aleatoria."""
-        return {
-            'move': random.uniform(-1, 1),
-            'turn': random.uniform(-1, 1),
-            'jump': random.choice([0, 0, 0, 1])  # Salta con 25% probabilidad
-        }
-    
+        cfg = self.agent_params.get("actions", {}).get("random", {})
+        move = random.uniform(float(cfg.get("move_min", -1.0)), float(cfg.get("move_max", 1.0)))
+        turn = random.uniform(float(cfg.get("turn_min", -1.0)), float(cfg.get("turn_max", 1.0)))
+        jump_probability = float(cfg.get("jump_probability", 0.25))
+        jump = 1.0 if random.random() < jump_probability else 0.0
+        return {"move": move, "turn": turn, "jump": jump}
+
     def _forward_action(self) -> Dict[str, float]:
-        """Siempre mover hacia adelante."""
+        cfg = self.agent_params.get("actions", {}).get("forward", {})
         return {
-            'move': 1.0,
-            'turn': 0.0,
-            'jump': 0.0
+            "move": float(cfg.get("move", 1.0)),
+            "turn": float(cfg.get("turn", 0.0)),
+            "jump": float(cfg.get("jump", 0.0)),
         }
-    
+
     def _explore_action(self, observation: Optional[Dict[str, Any]]) -> Dict[str, float]:
-        """
-        Exploración simple: cada cierto número de pasos, gira aleatoriamente.
-        """
-        # Cada 10 pasos, girar para explorar
-        if self.step_count % 10 == 0:
+        cfg = self.agent_params.get("actions", {}).get("explore", {})
+        interval = max(1, int(cfg.get("turn_interval", 10)))
+        turn_choices = cfg.get("turn_choices", [-1.0, 1.0]) or [-1.0, 1.0]
+
+        if self.step_count % interval == 0:
             return {
-                'move': 0.0,
-                'turn': random.choice([-1.0, 1.0]),
-                'jump': 0.0
+                "move": 0.0,
+                "turn": float(random.choice(turn_choices)),
+                "jump": float(cfg.get("jump", 0.0)),
             }
-        else:
-            return {
-                'move': 1.0,
-                'turn': random.uniform(-0.2, 0.2),
-                'jump': 0.0
-            }
-    
-    def process_observation(self, observation: Dict[str, Any]) -> None:
-        """
-        Procesa la observación recibida del entorno.
-        
-        Args:
-            observation: Diccionario con datos de observación
-        """
-        if self.verbose and observation:
-            # Extraer información útil
-            x = observation.get('XPos', 0)
-            y = observation.get('YPos', 0)
-            z = observation.get('ZPos', 0)
-            life = observation.get('Life', 0)
-            
-            print(f"[Paso {self.step_count}] Pos: ({x:.1f}, {y:.1f}, {z:.1f}) | Vida: {life}")
-    
+
+        return {
+            "move": float(cfg.get("move", 1.0)),
+            "turn": random.uniform(
+                float(cfg.get("turn_jitter_min", -0.2)),
+                float(cfg.get("turn_jitter_max", 0.2)),
+            ),
+            "jump": float(cfg.get("jump", 0.0)),
+        }
+
+    def process_observation(self, observation: Optional[Dict[str, Any]]) -> None:
+        obs = observation or {}
+        self.last_observation = obs
+
+        y = _as_float(obs.get("YPos"))
+        if y is not None:
+            self.max_height = max(self.max_height, y)
+
+        life = _as_float(obs.get("Life"))
+        if life is not None:
+            self.last_life = life
+            if self.death_on_zero_life and life <= self.min_life:
+                self._is_dead = True
+
+        if self.verbose and obs:
+            x = _as_float(obs.get("XPos"), 0.0)
+            y_print = _as_float(obs.get("YPos"), 0.0)
+            z = _as_float(obs.get("ZPos"), 0.0)
+            life_print = _as_float(obs.get("Life"), 0.0)
+            print(
+                f"[Step {self.step_count}] Pos: ({x:.2f}, {y_print:.2f}, {z:.2f}) | "
+                f"Life: {life_print:.2f}"
+            )
+
+    def should_terminate(self, observation: Optional[Dict[str, Any]] = None) -> bool:
+        if observation is not None:
+            self.process_observation(observation)
+        return self._is_dead
+
     def process_reward(self, reward: float) -> None:
-        """
-        Procesa la recompensa recibida.
-        
-        Args:
-            reward: Valor de recompensa
-        """
         self.total_reward += reward
         if reward != 0 and self.verbose:
-            print(f"  → Recompensa: {reward:.2f} | Total: {self.total_reward:.2f}")
-    
+            print(f"  -> Reward: {reward:+.2f} | Total: {self.total_reward:.2f}")
+
     def reset(self) -> None:
-        """Reinicia el estado del agente para un nuevo episodio."""
         self.step_count = 0
         self.total_reward = 0.0
+        self.max_height = float("-inf")
+        self.last_life = None
+        self.last_observation = {}
+        self._is_dead = False
         if self.verbose:
-            print("\n" + "="*50)
-            print("NUEVO EPISODIO")
-            print("="*50)
-    
+            print("\n" + "=" * 48)
+            print("NEW EPISODE")
+            print("=" * 48)
+
     def episode_summary(self) -> Dict[str, Any]:
-        """
-        Retorna un resumen del episodio completado.
-        
-        Returns:
-            Diccionario con estadísticas del episodio
-        """
+        max_height = self.max_height if self.max_height != float("-inf") else None
         return {
-            'steps': self.step_count,
-            'total_reward': self.total_reward,
-            'avg_reward': self.total_reward / max(1, self.step_count)
+            "steps": self.step_count,
+            "total_reward": self.total_reward,
+            "avg_reward": self.total_reward / max(1, self.step_count),
+            "max_height": max_height,
+            "target_height": self.target_height,
+            "died": self._is_dead,
         }
+
+    def get_status(self) -> Dict[str, Any]:
+        return {
+            "policy": self.policy,
+            "step_count": self.step_count,
+            "total_reward": self.total_reward,
+            "life": self.last_life,
+            "is_dead": self._is_dead,
+            "death_on_zero_life": self.death_on_zero_life,
+            "target_height": self.target_height,
+            "max_height": self.max_height if self.max_height != float("-inf") else None,
+        }
+
+
+def _as_float(value: Any, default: Optional[float] = None) -> Optional[float]:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default

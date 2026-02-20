@@ -1,388 +1,336 @@
 #!/usr/bin/env python
 """
-Script principal para ejecutar el agente de Malmo.
+Main script to run the Malmo agent.
 
-Uso:
-    python run_agent.py
-    python run_agent.py --episodes 10 --policy explore
-    python run_agent.py --mission missions/simple_test.xml --port 9000
-    python run_agent.py --viewer terminal
-    python run_agent.py --viewer grafico
-    python run_agent.py --viewer full
+Viewer modes:
+- none: no live viewer
+- terminal: minimal terminal line output
+- full: single realtime panel with video + live variables
 """
 
-import os
+from __future__ import annotations
+
+import argparse
+import json
+import logging
 import sys
 import time
-import argparse
-import logging
-from pathlib import Path
 from datetime import datetime
+from pathlib import Path
+from typing import Any, Dict, Optional
 
-# Agregar directorio actual al path
+import numpy as np
+
+# Add current project root to import path
 sys.path.insert(0, str(Path(__file__).parent))
 
-try:
-    import yaml
-except ImportError:
-    yaml = None
-    print("Warning: PyYAML no está instalado. Usando configuración por defecto.")
-
-from agents.basic_agent import BasicAgent
-from utils.malmo_connector import MalmoConnector
-from utils.agent_viewer import create_viewer, AgentViewer, SimpleViewer
-from utils.graphical_viewer import create_graphical_viewer, GraphicalViewer
+from agents.basic_agent import (  # noqa: E402
+    DEFAULT_AGENT_PARAMS,
+    DEFAULT_WORLD_RULES,
+    BasicAgent,
+    load_yaml_config,
+)
+from utils.malmo_connector import MalmoConnector  # noqa: E402
+from utils.viewer_3d import create_unified_viewer  # noqa: E402
 
 
-def load_config(config_path: str = "config/config.yaml") -> dict:
-    """
-    Carga la configuración desde archivo YAML.
-    
-    Args:
-        config_path: Ruta al archivo de configuración
-        
-    Returns:
-        Diccionario con configuración
-    """
-    default_config = {
-        'malmo': {
-            'port': 9000,
-            'server': '127.0.0.1',
-            'mission': 'missions/simple_test.xml',
-            'role': 0,
-            'experiment_id': 'experiment'
-        },
-        'agent': {
-            'type': 'basic',
-            'policy': 'explore',
-            'episodes': 5,
-            'max_steps': 50,
-            'action_delay': 0.05
-        },
-        'logging': {
-            'level': 'INFO',
-            'save_rewards': True,
-            'log_dir': 'logs'
-        }
-    }
-    
-    if yaml and Path(config_path).exists():
-        with open(config_path, 'r', encoding='utf-8') as f:
-            config = yaml.safe_load(f)
-            # Merge con defaults
-            for key in default_config:
-                if key not in config:
-                    config[key] = default_config[key]
-            return config
-    
-    return default_config
+DEFAULT_RUNTIME_CONFIG: Dict[str, Any] = {
+    "paths": {
+        "world_rules": "config/world_rules.yaml",
+        "agent_params": "config/agent_params.yaml",
+    },
+    "malmo": {
+        "port": 9000,
+        "server": "127.0.0.1",
+        "role": 0,
+        "experiment_id": "experiment",
+        "mission": "missions/simple_test.xml",
+    },
+    "logging": {
+        "level": "INFO",
+        "log_dir": "logs",
+    },
+}
 
 
-def setup_logging(config: dict) -> None:
-    """Configura el sistema de logging."""
-    log_dir = Path(config['logging'].get('log_dir', 'logs'))
+def setup_logging(config: Dict[str, Any]) -> None:
+    log_cfg = config.get("logging", {})
+    log_dir = Path(log_cfg.get("log_dir", "logs"))
     log_dir.mkdir(exist_ok=True)
-    
-    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-    log_file = log_dir / f'run_{timestamp}.log'
-    
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    log_file = log_dir / f"run_{timestamp}.log"
+
     logging.basicConfig(
-        level=getattr(logging, config['logging'].get('level', 'INFO')),
-        format='%(asctime)s - %(levelname)s - %(message)s',
-        handlers=[
-            logging.FileHandler(log_file),
-            logging.StreamHandler()
-        ]
+        level=getattr(logging, str(log_cfg.get("level", "INFO")).upper(), logging.INFO),
+        format="%(asctime)s - %(levelname)s - %(message)s",
+        handlers=[logging.FileHandler(log_file), logging.StreamHandler()],
     )
 
 
-def parse_observation(obs) -> dict:
-    """
-    Parsea la observación del entorno a un diccionario.
-    
-    Args:
-        obs: Observación del entorno (puede ser array, dict, etc.)
-        
-    Returns:
-        Diccionario con datos de observación
-    """
-    if obs is None:
+def _parse_info_payload(info: Any) -> Dict[str, Any]:
+    if info is None:
         return {}
-    
-    # Si ya es un diccionario
-    if isinstance(obs, dict):
-        return obs
-    
-    # Si es un array numpy (frame)
-    if hasattr(obs, 'shape'):
-        # Intentar extraer información adicional si está disponible
-        return {'frame_shape': obs.shape, 'raw_obs': obs}
-    
-    # Si tiene atributos
-    if hasattr(obs, '__dict__'):
-        return obs.__dict__
-    
-    return {'raw': obs}
+    if isinstance(info, dict):
+        return dict(info)
+    if isinstance(info, str):
+        stripped = info.strip()
+        if not stripped:
+            return {}
+        try:
+            parsed = json.loads(stripped)
+            if isinstance(parsed, dict):
+                return parsed
+            return {"info_list": parsed}
+        except json.JSONDecodeError:
+            return {"info_raw": stripped}
+    return {"info_raw": str(info)}
 
 
-def run_episode(connector: MalmoConnector, 
-                agent: BasicAgent, 
-                max_steps: int = 100,
-                viewer = None) -> dict:
+def parse_observation(
+    obs: Any,
+    info: Any = None,
+    frame_shape: Optional[tuple[int, ...]] = None,
+) -> Dict[str, Any]:
     """
-    Ejecuta un episodio del agente con visualización.
-    
-    Args:
-        connector: Conector Malmo
-        agent: Agente a ejecutar
-        max_steps: Máximo número de pasos
-        viewer: Visualizador (opcional)
-        
-    Returns:
-        Diccionario con estadísticas del episodio
+    Parse Malmo observation and info into a single dictionary.
+    """
+    parsed: Dict[str, Any] = {}
+
+    if isinstance(obs, dict):
+        parsed.update(obs)
+    elif hasattr(obs, "shape"):
+        frame = obs
+        if (
+            isinstance(obs, np.ndarray)
+            and obs.ndim == 1
+            and frame_shape is not None
+            and int(np.prod(frame_shape)) == int(obs.size)
+        ):
+            frame = obs.reshape(frame_shape)
+        parsed["_frame"] = frame
+    elif obs is not None:
+        parsed["raw_obs"] = obs
+
+    parsed.update(_parse_info_payload(info))
+    return parsed
+
+
+def run_episode(
+    connector: MalmoConnector,
+    agent: BasicAgent,
+    max_steps: int = 100,
+    viewer: Optional[Any] = None,
+) -> Dict[str, Any]:
+    """
+    Run one episode and return summary stats.
     """
     agent.reset()
-    
-    # Reiniciar entorno
     obs = connector.reset()
     done = False
     step = 0
-    
+    frame_shape = getattr(getattr(connector, "observation_space", None), "shape", None)
+    last_scalars: Dict[str, Any] = {}
+
     while not done and step < max_steps:
-        # Parsear observación
-        obs_dict = parse_observation(obs)
-        
-        # Obtener acción del agente
+        obs_dict = parse_observation(obs, frame_shape=frame_shape)
         action = agent.get_action(obs_dict)
-        
-        # Ejecutar acción
+
         obs, reward, done, info = connector.step(action)
-        
-        # Parsear nueva observación
-        new_obs_dict = parse_observation(obs)
-        
-        # Procesar resultados
-        agent.process_reward(reward)
-        
-        # Actualizar visualización
+        next_obs = parse_observation(obs, info, frame_shape=frame_shape)
+
+        # Some ticks can arrive without info payload; keep last known scalar state.
+        for key, value in last_scalars.items():
+            next_obs.setdefault(key, value)
+        for key in ("XPos", "YPos", "ZPos", "Life", "Yaw", "Pitch", "WorldTime", "TotalTime"):
+            if key in next_obs:
+                last_scalars[key] = next_obs[key]
+
+        agent.process_observation(next_obs)
+        if agent.should_terminate():
+            done = True
+
+        reward_value = float(reward)
+        agent.process_reward(reward_value)
+
+        step += 1
+
         if viewer:
             viewer.update_step(
-                step=step + 1,
+                step=step,
                 action=action,
-                observation=new_obs_dict,
-                reward=reward,
-                total_reward=agent.total_reward
+                observation=next_obs,
+                reward=reward_value,
+                total_reward=agent.total_reward,
+                agent_metrics=agent.get_status(),
             )
-            
-            # Verificar si el viewer sigue activo (para Pygame)
-            if hasattr(viewer, 'is_running') and not viewer.is_running():
-                print("\n⚠️  Visualización cerrada por el usuario.")
+            if hasattr(viewer, "is_running") and not viewer.is_running():
+                print("\nViewer closed by user.")
                 break
-        
-        step += 1
+
         time.sleep(agent.action_delay)
-    
+
     return agent.episode_summary()
 
 
-def create_viewer_by_type(viewer_type: str):
-    """
-    Crea el visualizador según el tipo especificado.
-    
-    Args:
-        viewer_type: 'terminal', 'grafico', 'full', o 'none'
-        
-    Returns:
-        Instancia del visualizador o None
-    """
-    if viewer_type == 'none' or viewer_type is None:
-        return None
-    
-    if viewer_type == 'terminal':
-        return create_viewer(use_rich=True)
-    
-    if viewer_type == 'grafico':
-        return create_graphical_viewer(pygame=True, matplotlib=True)
-    
-    if viewer_type == 'full':
-        # Combinado: terminal Rich + gráficos
-        class CombinedViewer:
-            """Visualizador combinado terminal + gráfico."""
-            
-            def __init__(self):
-                self.terminal = create_viewer(use_rich=True)
-                self.graphic = create_graphical_viewer(pygame=True, matplotlib=False)
-                
-            def start(self, total_episodes, max_steps, policy):
-                self.terminal.start(total_episodes, max_steps, policy)
-                self.graphic.start(total_episodes, max_steps, policy)
-                
-            def start_episode(self, episode):
-                self.terminal.start_episode(episode)
-                self.graphic.start_episode(episode)
-                
-            def update_step(self, step, action, observation, reward, total_reward):
-                self.terminal.update_step(step, action, observation, reward, total_reward)
-                self.graphic.update_step(step, action, observation, reward, total_reward)
-                
-            def end_episode(self):
-                self.terminal.end_episode()
-                self.graphic.end_episode()
-                
-            def close(self):
-                self.graphic.close()
-                
-            def is_running(self):
-                return self.graphic.is_running()
-        
-        return CombinedViewer()
-    
-    return None
+def _build_arg_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Malmo agent runner")
+    parser.add_argument("--config", type=str, default="config/config.yaml", help="Runtime config file")
+    parser.add_argument("--world-rules", type=str, default=None, help="World rules YAML")
+    parser.add_argument("--agent-params", type=str, default=None, help="Agent params YAML")
+    parser.add_argument("--mission", type=str, default=None, help="Mission XML path")
+    parser.add_argument("--port", type=int, default=None, help="Malmo port")
+    parser.add_argument("--episodes", type=int, default=None, help="Episode count override")
+    parser.add_argument("--max-steps", type=int, default=None, help="Max steps override")
+    parser.add_argument(
+        "--policy",
+        type=str,
+        default=None,
+        choices=["random", "forward", "explore"],
+        help="Policy override",
+    )
+    parser.add_argument(
+        "--viewer",
+        type=str,
+        default="none",
+        choices=["none", "terminal", "full"],
+        help="Viewer mode: none, terminal, full",
+    )
+    return parser
 
 
-def main():
-    """Función principal."""
-    parser = argparse.ArgumentParser(description='Agente de Malmo')
-    parser.add_argument('--config', type=str, default='config/config.yaml',
-                        help='Archivo de configuración')
-    parser.add_argument('--mission', type=str, default=None,
-                        help='Archivo de misión XML')
-    parser.add_argument('--port', type=int, default=None,
-                        help='Puerto de Malmo')
-    parser.add_argument('--episodes', type=int, default=None,
-                        help='Número de episodios')
-    parser.add_argument('--max-steps', type=int, default=None,
-                        help='Máximo pasos por episodio')
-    parser.add_argument('--policy', type=str, default=None,
-                        choices=['random', 'forward', 'explore'],
-                        help='Política del agente')
-    parser.add_argument('--viewer', type=str, default='none',
-                        choices=['none', 'terminal', 'grafico', 'full'],
-                        help='Tipo de visualización: none, terminal (Rich), grafico (Pygame+Matplotlib), full (ambos)')
-    
-    args = parser.parse_args()
-    
-    # Cargar configuración
-    config = load_config(args.config)
-    
-    # Sobrescribir con argumentos de línea de comandos
+def main() -> None:
+    args = _build_arg_parser().parse_args()
+    repo_root = Path(__file__).resolve().parent
+
+    runtime_cfg = load_yaml_config(args.config, DEFAULT_RUNTIME_CONFIG)
+    world_rules_path = args.world_rules or runtime_cfg.get("paths", {}).get("world_rules", "config/world_rules.yaml")
+    agent_params_path = args.agent_params or runtime_cfg.get("paths", {}).get("agent_params", "config/agent_params.yaml")
+
+    world_rules = load_yaml_config(world_rules_path, DEFAULT_WORLD_RULES)
+    agent_params = load_yaml_config(agent_params_path, DEFAULT_AGENT_PARAMS)
+
+    world_cfg = world_rules.setdefault("world", {})
+    world_server = world_cfg.setdefault("server", {})
+    runtime_malmo = runtime_cfg.get("malmo", {})
+    behavior_cfg = agent_params.setdefault("behavior", {})
+    run_cfg = agent_params.setdefault("run", {})
+
+    # Keep backward compatibility with config/config.yaml defaults.
+    world_server.setdefault("host", runtime_malmo.get("server", "127.0.0.1"))
+    world_server.setdefault("port", runtime_malmo.get("port", 9000))
+    world_server.setdefault("role", runtime_malmo.get("role", 0))
+    world_server.setdefault("experiment_id", runtime_malmo.get("experiment_id", "experiment"))
+    world_cfg.setdefault("mission_file", runtime_malmo.get("mission", "missions/simple_test.xml"))
+
+    if args.port is not None:
+        world_server["port"] = args.port
     if args.mission:
-        config['malmo']['mission'] = args.mission
-    if args.port:
-        config['malmo']['port'] = args.port
-    if args.episodes:
-        config['agent']['episodes'] = args.episodes
-    if args.max_steps:
-        config['agent']['max_steps'] = args.max_steps
+        world_cfg["mission_file"] = args.mission
     if args.policy:
-        config['agent']['policy'] = args.policy
-    
-    # Configurar logging
-    setup_logging(config)
-    
-    print("="*60)
-    print("🎮 AGENTE DE MALMO")
-    print("="*60)
-    print(f"Misión: {config['malmo']['mission']}")
-    print(f"Puerto: {config['malmo']['port']}")
-    print(f"Política: {config['agent']['policy']}")
-    print(f"Episodios: {config['agent']['episodes']}")
-    print(f"Max pasos: {config['agent']['max_steps']}")
-    print(f"Visualización: {args.viewer}")
-    print("="*60)
-    
-    # Verificar que Minecraft esté corriendo
-    print("\n⚠️  Asegúrate de que Minecraft Malmo esté corriendo:")
-    print(f"   cd c:\\Users\\gonza\\malmo\\Minecraft")
-    print(f"   launchClient.bat -port {config['malmo']['port']} -env")
-    print()
-    
-    # Crear conector
-    mission_path = Path(__file__).parent / config['malmo']['mission']
+        behavior_cfg["policy"] = args.policy
+    if args.episodes is not None:
+        run_cfg["episodes"] = args.episodes
+    if args.max_steps is not None:
+        run_cfg["max_steps"] = args.max_steps
+
+    setup_logging(runtime_cfg)
+
+    mission_rel_path = str(world_cfg.get("mission_file", "missions/simple_test.xml"))
+    mission_path = Path(mission_rel_path)
+    if not mission_path.is_absolute():
+        mission_path = repo_root / mission_rel_path
+    mission_path = mission_path.resolve()
+
+    if not mission_path.exists():
+        print(f"Mission file not found: {mission_path}")
+        sys.exit(1)
+
+    episodes = int(run_cfg.get("episodes", 5))
+    max_steps = int(run_cfg.get("max_steps", 50))
+    policy = str(behavior_cfg.get("policy", "explore"))
+
+    print("=" * 72)
+    print("MALMO AGENT")
+    print("=" * 72)
+    print(f"mission       : {mission_path}")
+    print(f"server        : {world_server.get('host')}:{world_server.get('port')}")
+    print(f"policy        : {policy}")
+    print(f"episodes      : {episodes}")
+    print(f"max_steps     : {max_steps}")
+    print(f"viewer        : {args.viewer}")
+    print(f"world_rules   : {world_rules_path}")
+    print(f"agent_params  : {agent_params_path}")
+    print("=" * 72)
+
     connector = MalmoConnector(
         mission_xml=str(mission_path),
-        port=config['malmo']['port'],
-        server=config['malmo']['server'],
-        role=config['malmo']['role'],
-        experiment_id=config['malmo']['experiment_id']
+        port=int(world_server.get("port", 9000)),
+        server=str(world_server.get("host", "127.0.0.1")),
+        role=int(world_server.get("role", 0)),
+        experiment_id=str(world_server.get("experiment_id", "experiment")),
     )
-    
-    # Conectar
+
     if not connector.connect():
-        print("\n❌ No se pudo conectar a Malmo.")
-        print("Verifica que Minecraft esté corriendo con el mod Malmo.")
+        print("\nCould not connect to Malmo.")
+        print("Start Minecraft Malmo first, for example:")
+        print(f"  cd c:\\Users\\gonza\\malmo\\Minecraft")
+        print(f"  launchClient.bat -port {world_server.get('port', 9000)} -env")
         sys.exit(1)
-    
-    # Crear agente
+
+    viewer = create_unified_viewer(args.viewer)
     agent = BasicAgent(
-        policy=config['agent']['policy'],
-        action_delay=config['agent']['action_delay'],
-        verbose=(args.viewer == 'none')  # Solo verbose si no hay viewer
+        policy=policy,
+        action_delay=float(behavior_cfg.get("action_delay", 0.05)),
+        verbose=bool(behavior_cfg.get("verbose", True)) and args.viewer == "none",
+        agent_params=agent_params,
+        world_rules=world_rules,
     )
-    
-    # Crear visualizador
-    viewer = create_viewer_by_type(args.viewer)
-    
+
     if viewer:
-        viewer.start(
-            total_episodes=config['agent']['episodes'],
-            max_steps=config['agent']['max_steps'],
-            policy=config['agent']['policy']
-        )
-    
-    # Ejecutar episodios
+        viewer.start(total_episodes=episodes, max_steps=max_steps, policy=policy)
+
     all_stats = []
-    
     try:
-        for episode in range(config['agent']['episodes']):
-            # Iniciar episodio en viewer
+        for episode in range(1, episodes + 1):
             if viewer:
-                viewer.start_episode(episode + 1)
+                viewer.start_episode(episode)
             else:
-                print(f"\n{'='*60}")
-                print(f"EPISODIO {episode + 1}/{config['agent']['episodes']}")
-                print('='*60)
-            
-            stats = run_episode(
-                connector, 
-                agent, 
-                max_steps=config['agent']['max_steps'],
-                viewer=viewer
-            )
+                print(f"\nEpisode {episode}/{episodes}")
+
+            stats = run_episode(connector, agent, max_steps=max_steps, viewer=viewer)
             all_stats.append(stats)
-            
-            # Finalizar episodio en viewer
+
             if viewer:
                 viewer.end_episode()
-            
-            # Mostrar resumen del episodio
-            if args.viewer == 'none':
-                print(f"\n📊 Resumen del episodio:")
-                print(f"   Pasos: {stats['steps']}")
-                print(f"   Recompensa total: {stats['total_reward']:.2f}")
-                print(f"   Recompensa promedio: {stats['avg_reward']:.4f}")
-    
+            else:
+                print(
+                    f"steps={stats['steps']} total_reward={stats['total_reward']:.2f} "
+                    f"avg_reward={stats['avg_reward']:.4f} died={stats.get('died')}"
+                )
     except KeyboardInterrupt:
-        print("\n\n⚠️  Detenido por el usuario.")
-    
+        print("\nStopped by user.")
     finally:
-        # Cerrar visualizador
         if viewer:
             viewer.close()
         connector.close()
-    
-    # Resumen final
+
     if all_stats:
-        print("\n" + "="*60)
-        print("📈 RESUMEN FINAL")
-        print("="*60)
-        total_reward = sum(s['total_reward'] for s in all_stats)
-        avg_reward = total_reward / len(all_stats)
-        print(f"Total episodios: {len(all_stats)}")
-        print(f"Recompensa total: {total_reward:.2f}")
-        print(f"Recompensa promedio por episodio: {avg_reward:.2f}")
-        print("="*60)
+        total_reward = sum(item["total_reward"] for item in all_stats)
+        avg_reward = total_reward / max(1, len(all_stats))
+        deaths = sum(1 for item in all_stats if item.get("died"))
+        max_height = max((item.get("max_height") or 0.0) for item in all_stats)
+
+        print("\n" + "=" * 72)
+        print("FINAL SUMMARY")
+        print("=" * 72)
+        print(f"episodes     : {len(all_stats)}")
+        print(f"total_reward : {total_reward:.2f}")
+        print(f"avg_reward   : {avg_reward:.2f}")
+        print(f"deaths       : {deaths}")
+        print(f"max_height   : {max_height:.2f}")
+        print("=" * 72)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

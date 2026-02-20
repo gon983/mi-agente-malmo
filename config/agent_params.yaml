@@ -1,0 +1,31 @@
+run:
+  episodes: 5
+  max_steps: 50
+
+behavior:
+  policy: "explore"
+  action_delay: 0.05
+  verbose: true
+
+actions:
+  random:
+    move_min: -1.0
+    move_max: 1.0
+    turn_min: -1.0
+    turn_max: 1.0
+    jump_probability: 0.25
+  forward:
+    move: 1.0
+    turn: 0.0
+    jump: 0.0
+  explore:
+    turn_interval: 10
+    turn_choices: [-1.0, 1.0]
+    move: 1.0
+    turn_jitter_min: -0.2
+    turn_jitter_max: 0.2
+    jump: 0.0
+
+termination:
+  death_on_zero_life: true
+  min_life: 0.0

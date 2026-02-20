@@ -1,0 +1,45 @@
+world:
+  mission_file: "missions/climb_challenge.xml"
+  server:
+    host: "127.0.0.1"
+    port: 9000
+    role: 0
+    experiment_id: "climb_challenge"
+
+environment:
+  weather: "clear"
+  allow_spawning: false
+  start_time: 6000
+  allow_passage_of_time: false
+  time_limit_ms: 30000
+  start_position:
+    x: 0.5
+    y: 227.0
+    z: 0.5
+    yaw: 0.0
+    pitch: 0.0
+
+terrain:
+  generator_string: "3;7,220*1,5*3,2;3;,biome_1"
+  scaffold_block: "dirt"
+  scaffold_quantity: 32
+  route_blocks:
+    - {x: 1, y: 227, z: 0, type: "stone"}
+    - {x: 2, y: 227, z: 0, type: "stone"}
+    - {x: 3, y: 228, z: 0, type: "stone"}
+    - {x: 4, y: 228, z: 0, type: "stone"}
+    - {x: 5, y: 229, z: 0, type: "stone"}
+    - {x: 6, y: 229, z: 0, type: "stone"}
+    - {x: 7, y: 230, z: 0, type: "gold_block"}
+
+objective:
+  target_position:
+    x: 7.5
+    y: 230.0
+    z: 0.5
+  target_height: 230.0
+  tolerance: 1.1
+
+rewards:
+  reach_target: 100.0
+  touch_lava: -25.0

@@ -1,28 +1,16 @@
-# Configuración del Agente de Malmo
+# Runtime config (runner/logging only)
 
-# Conexión con Minecraft/Malmo
+paths:
+  world_rules: "config/world_rules.yaml"
+  agent_params: "config/agent_params.yaml"
+
 malmo:
   port: 9000
   server: "127.0.0.1"
-  mission: "missions/simple_test.xml"
   role: 0
   experiment_id: "test_experiment"
+  mission: "missions/climb_challenge.xml"
 
-# Configuración del agente
-agent:
-  type: "basic"  # basic, random, dqn, ppo
-  episodes: 5
-  max_steps: 50
-  action_delay: 0.05  # segundos entre acciones
-
-# Logging
 logging:
   level: "INFO"
-  save_rewards: true
-  save_trajectory: true
   log_dir: "logs"
-
-# Modelos (para agentes RL)
-model:
-  save_dir: "models"
-  save_every: 100  # episodios
