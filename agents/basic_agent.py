@@ -168,6 +168,23 @@ class BasicAgent:
 
         self.death_on_zero_life = _require_bool(termination_cfg, "death_on_zero_life", "agent_params.termination")
         self.min_life = _require_float(termination_cfg, "min_life", "agent_params.termination")
+        self.stop_on_target_height = _require_bool(
+            termination_cfg,
+            "stop_on_target_height",
+            "agent_params.termination",
+        )
+        self.no_height_gain_patience = _require_int(
+            termination_cfg,
+            "no_height_gain_patience",
+            "agent_params.termination",
+            min_value=0,
+        )
+        self.height_gain_epsilon = _require_float(
+            termination_cfg,
+            "height_gain_epsilon",
+            "agent_params.termination",
+            min_value=0.0,
+        )
         self.target_height = _require_float(objective_cfg, "target_height", "world_rules.objective")
 
         self.position_bin_size = _require_float(state_cfg, "position_bin_size", "agent_params.state", min_value=0.0001)
@@ -208,9 +225,11 @@ class BasicAgent:
         self.step_count = 0
         self.total_reward = 0.0
         self.max_height = float("-inf")
+        self.steps_without_height_gain = 0
         self.last_life: Optional[float] = None
         self.last_observation: Dict[str, Any] = {}
         self._is_dead = False
+        self._termination_reason: Optional[str] = None
 
         self.q_table: Dict[State, np.ndarray] = {}
         self._last_state: Optional[State] = None
@@ -365,13 +384,19 @@ class BasicAgent:
 
         y = _as_float(obs.get("YPos"))
         if y is not None:
-            self.max_height = max(self.max_height, y)
+            if self.max_height == float("-inf") or y > (self.max_height + self.height_gain_epsilon):
+                self.max_height = y
+                self.steps_without_height_gain = 0
+            else:
+                self.max_height = max(self.max_height, y)
+                self.steps_without_height_gain += 1
 
         life = _as_float(obs.get("Life"))
         if life is not None:
             self.last_life = life
             if self.death_on_zero_life and life <= self.min_life:
                 self._is_dead = True
+                self._termination_reason = "death"
 
         if self.verbose and obs:
             x = _as_float(obs.get("XPos"), 0.0)
@@ -386,7 +411,20 @@ class BasicAgent:
     def should_terminate(self, observation: Optional[Dict[str, Any]] = None) -> bool:
         if observation is not None:
             self.process_observation(observation)
-        return self._is_dead
+        if self._is_dead:
+            if self._termination_reason is None:
+                self._termination_reason = "death"
+            return True
+
+        if self.stop_on_target_height and self.max_height != float("-inf") and self.max_height >= self.target_height:
+            self._termination_reason = "target_height"
+            return True
+
+        if self.no_height_gain_patience > 0 and self.steps_without_height_gain >= self.no_height_gain_patience:
+            self._termination_reason = "no_height_gain"
+            return True
+
+        return False
 
     def process_reward(
         self,
@@ -420,9 +458,11 @@ class BasicAgent:
         self.step_count = 0
         self.total_reward = 0.0
         self.max_height = float("-inf")
+        self.steps_without_height_gain = 0
         self.last_life = None
         self.last_observation = {}
         self._is_dead = False
+        self._termination_reason = None
         self._last_state = None
         self._last_action = None
         self._last_action_command = None
@@ -441,6 +481,8 @@ class BasicAgent:
             "max_height": max_height,
             "target_height": self.target_height,
             "died": self._is_dead,
+            "steps_without_height_gain": self.steps_without_height_gain,
+            "termination_reason": self._termination_reason,
             "q_states": len(self.q_table),
         }
 
@@ -451,9 +493,11 @@ class BasicAgent:
             "total_reward": self.total_reward,
             "life": self.last_life,
             "is_dead": self._is_dead,
+            "termination_reason": self._termination_reason,
             "death_on_zero_life": self.death_on_zero_life,
             "target_height": self.target_height,
             "max_height": self.max_height if self.max_height != float("-inf") else None,
+            "steps_without_height_gain": self.steps_without_height_gain,
             "epsilon": self.epsilon,
             "alpha": self.alpha,
             "gamma": self.gamma,

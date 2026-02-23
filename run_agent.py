@@ -440,6 +440,7 @@ def main() -> None:
                 print(
                     f"steps={stats['steps']} total_reward={stats['total_reward']:.2f} "
                     f"avg_reward={stats['avg_reward']:.4f} died={stats.get('died')} "
+                    f"reason={stats.get('termination_reason')} "
                     f"q_states={stats.get('q_states')}"
                 )
     except KeyboardInterrupt:

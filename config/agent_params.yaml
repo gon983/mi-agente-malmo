@@ -1,6 +1,6 @@
 run:
-  episodes: 10
-  max_steps: 1900
+  episodes: 300
+  max_steps: 4000
 
 behavior:
   policy: "explore"
@@ -26,15 +26,18 @@ actions:
 learning:
   alpha: 0.1
   gamma: 0.99
-  epsilon: 0.20
+  epsilon: 0.15
   q_table_path: "artifacts/q_table_mountain.json"
   autosave_each_episode: true
 
 reward:
   mode: "height_gain_only"
   height_gain_scale: 20.0
-  min_height_delta: 0.05
+  min_height_delta: 0.10
 
 termination:
   death_on_zero_life: true
   min_life: 0.0
+  stop_on_target_height: true
+  no_height_gain_patience: 300
+  height_gain_epsilon: 0.10

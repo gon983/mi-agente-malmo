@@ -57,6 +57,9 @@ reward:
 termination:
   death_on_zero_life: <bool>
   min_life: <float>
+  stop_on_target_height: <bool>
+  no_height_gain_patience: <int >= 0>
+  height_gain_epsilon: <float >= 0>
 ```
 
 ## Bloque `run`
@@ -153,6 +156,9 @@ Define la fuente de recompensa usada por Q-learning en `run_agent.py`.
 |---|---|---|
 | `termination.death_on_zero_life` | `bool` | Si `true`, termina cuando `Life <= min_life`. |
 | `termination.min_life` | `float` | Umbral de vida para terminar. |
+| `termination.stop_on_target_height` | `bool` | Si `true`, termina cuando `max_height >= world_rules.objective.target_height`. |
+| `termination.no_height_gain_patience` | `int >= 0` | Corta episodio tras N steps sin mejorar altura. `0` desactiva este criterio. |
+| `termination.height_gain_epsilon` | `float >= 0` | Delta minimo para considerar que realmente hubo mejora de altura. |
 
 ## Relacion con Malmo
 
