@@ -332,6 +332,19 @@ def main() -> None:
         print(f"  launchClient.bat -port {port} -env")
         sys.exit(1)
 
+    actions_list = getattr(connector.action_space, "actions", None)
+    if not isinstance(actions_list, list) or not actions_list:
+        raise ValueError(
+            "Expected a discrete Malmo action space with explicit commands. "
+            f"Got: {type(actions_list).__name__}"
+        )
+    missing_commands = [command for command in action_commands if command not in actions_list]
+    if missing_commands:
+        raise ValueError(
+            "Invalid agent_params.actions.discrete: command(s) not available in current mission "
+            f"action space. Missing={missing_commands} available={actions_list}"
+        )
+
     viewer = create_unified_viewer(args.viewer)
     agent = BasicAgent(
         policy=policy,

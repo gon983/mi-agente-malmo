@@ -17,6 +17,7 @@ El runner carga `agent_params.yaml` en modo estricto:
 3. Si un tipo/rango no coincide, falla.
 
 No hay fallback automatico en `agent_params`.
+Tampoco hay fallback automatico en el mapeo de acciones del conector: si una accion no matchea, se lanza error.
 
 ## Esquema global
 
@@ -102,7 +103,7 @@ Ejemplo recomendado:
 2. `turn -1`
 3. `turn 1`
 4. `jump 1`
-5. `move 0`
+5. `jump 0`
 
 | Variable | Tipo | Efecto |
 |---|---|---|

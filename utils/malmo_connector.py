@@ -178,33 +178,20 @@ class MalmoConnector:
         Returns:
             Array de acciones compatible con el entorno
         """
-        if hasattr(self.env, 'action_space'):
-            action_space = self.env.action_space
-            actions = getattr(action_space, "actions", None)
+        if not hasattr(self.env, "action_space"):
+            raise RuntimeError("Environment has no action_space; cannot map agent action.")
 
-            # malmoenv commonly uses a discrete action space with string commands.
-            if isinstance(actions, list) and len(actions) > 0:
-                return self._dict_to_discrete_index(action, actions, action_space.sample)
+        action_space = self.env.action_space
+        actions = getattr(action_space, "actions", None)
+        if not isinstance(actions, list) or len(actions) == 0:
+            raise ValueError(
+                "Expected discrete Malmo action space with explicit command list. "
+                f"Got action_space={type(action_space).__name__} actions={actions!r}"
+            )
 
-            # Fallback for continuous-like spaces.
-            sampled = action_space.sample()
-            if hasattr(sampled, '__len__'):
-                action_list = list(sampled)
-                action_dict = action if isinstance(action, dict) else {}
-                action_list[0] = action_dict.get('move', 0.0)
-                if len(action_list) > 1:
-                    action_list[1] = action_dict.get('turn', 0.0)
-                if len(action_list) > 2:
-                    action_list[2] = action_dict.get('jump', 0.0)
-                return action_list
-            return sampled
+        return self._dict_to_discrete_index(action, actions)
 
-        # Last resort.
-        if isinstance(action, dict):
-            return [action.get('move', 0.0), action.get('turn', 0.0), action.get('jump', 0.0)]
-        return action
-
-    def _dict_to_discrete_index(self, action: Any, actions: List[str], sample_fn) -> int:
+    def _dict_to_discrete_index(self, action: Any, actions: List[str]) -> int:
         """
         Convert agent action into a discrete Malmo command index.
         """
@@ -212,21 +199,31 @@ class MalmoConnector:
 
         if isinstance(action, Integral):
             candidate = int(action)
-            return candidate if 0 <= candidate < len(actions) else sample_fn()
+            if 0 <= candidate < len(actions):
+                return candidate
+            raise ValueError(
+                f"Invalid discrete action index {candidate}. "
+                f"Valid range is [0, {len(actions) - 1}]"
+            )
 
         if isinstance(action, str):
             command = " ".join(action.strip().split())
             if command in index_by_cmd:
                 return index_by_cmd[command]
-            return sample_fn()
+            raise ValueError(
+                f"Action command '{command}' not available in action space. "
+                f"Available: {actions}"
+            )
 
         action_dict = action if isinstance(action, dict) else {}
         if "action_command" in action_dict:
             command = " ".join(str(action_dict["action_command"]).strip().split())
             if command in index_by_cmd:
                 return index_by_cmd[command]
-            # Command given but not available in this mission/action filter.
-            return sample_fn()
+            raise ValueError(
+                f"Action command '{command}' not available in action space. "
+                f"Available: {actions}"
+            )
 
         if "action_index" in action_dict:
             # Fallback only: this index is assumed to already match env.action_space.actions.
@@ -235,44 +232,45 @@ class MalmoConnector:
                 if 0 <= candidate < len(actions):
                     return candidate
             except (TypeError, ValueError):
-                pass
-            return sample_fn()
+                raise ValueError(f"Invalid action_index value: {action_dict['action_index']!r}")
+            raise ValueError(
+                f"Action index {candidate} out of range for action space size {len(actions)}"
+            )
 
-        move = float(action_dict.get("move", 0.0))
-        turn = float(action_dict.get("turn", 0.0))
-        jump = float(action_dict.get("jump", 0.0))
+        if any(key in action_dict for key in ("move", "turn", "jump")):
+            move = float(action_dict.get("move", 0.0))
+            turn = float(action_dict.get("turn", 0.0))
+            jump = float(action_dict.get("jump", 0.0))
 
-        candidates = []
+            if jump > 0.5:
+                command = "jump 1"
+            elif move > 0.1:
+                command = "move 1"
+            elif move < -0.1:
+                command = "move -1"
+            elif turn > 0.1:
+                command = "turn 1"
+            elif turn < -0.1:
+                command = "turn -1"
+            else:
+                raise ValueError(
+                    "Legacy move/turn/jump action has no active command above threshold. "
+                    "Use action_command/action_index with a valid discrete command."
+                )
 
-        # Keep movement priority, then turn, then jump.
-        if move > 0.1:
-            candidates.append("move 1")
-        elif move < -0.1:
-            candidates.append("move -1")
-
-        if turn > 0.1:
-            candidates.append("turn 1")
-        elif turn < -0.1:
-            candidates.append("turn -1")
-
-        if jump > 0.5:
-            candidates.insert(0, "jump 1")
-
-        # Neutral commands as soft fallback.
-        candidates.extend(["jump 0", "turn 0", "move 0"])
-
-        for command in candidates:
             if command in index_by_cmd:
                 return index_by_cmd[command]
+            raise ValueError(
+                f"Legacy command '{command}' not available in action space. "
+                f"Available: {actions}"
+            )
 
-        # If exact commands are not available, prefer partial command matches.
-        for command in candidates:
-            root = command.split(" ")[0]
-            for idx, action in enumerate(actions):
-                if action.startswith(root + " "):
-                    return idx
-
-        return sample_fn()
+        raise ValueError(
+            "Invalid action payload. Expected one of: "
+            "discrete index (int), action command (str), "
+            "{action_command: str}, {action_index: int}, "
+            "or legacy {move/turn/jump} with one active command."
+        )
     
     def close(self) -> None:
         """Cierra la conexión con Malmo."""

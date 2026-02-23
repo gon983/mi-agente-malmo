@@ -22,18 +22,20 @@
     <ServerHandlers>
       <FlatWorldGenerator generatorString="3;7,220*1,5*3,2;3;,biome_1"/>
       <DrawingDecorator>
-        <DrawCuboid x1="-3" y1="227" z1="-3" x2="13" y2="227" z2="3" type="lava"/>
-        <DrawCuboid x1="-1" y1="227" z1="-1" x2="11" y2="227" z2="1" type="stone"/>
+        <DrawCuboid x1="-4" y1="227" z1="-4" x2="14" y2="227" z2="4" type="lava"/>
+        <DrawCuboid x1="-1" y1="227" z1="-2" x2="11" y2="227" z2="2" type="stone"/>
         <DrawCuboid x1="-3" y1="227" z1="-2" x2="0" y2="227" z2="2" type="stone"/>
+        <DrawCuboid x1="-1" y1="228" z1="-3" x2="11" y2="235" z2="-3" type="glass"/>
+        <DrawCuboid x1="-1" y1="228" z1="3" x2="11" y2="235" z2="3" type="glass"/>
 
-        <DrawBlock x="1" y="228" z="0" type="stone"/>
-        <DrawBlock x="2" y="229" z="0" type="stone"/>
-        <DrawBlock x="3" y="230" z="0" type="stone"/>
-        <DrawBlock x="4" y="231" z="0" type="stone"/>
-        <DrawBlock x="5" y="232" z="0" type="stone"/>
-        <DrawBlock x="6" y="233" z="0" type="gold_block"/>
+        <DrawCuboid x1="1" y1="228" z1="-2" x2="1" y2="228" z2="2" type="stone"/>
+        <DrawCuboid x1="2" y1="229" z1="-2" x2="2" y2="229" z2="2" type="stone"/>
+        <DrawCuboid x1="3" y1="230" z1="-2" x2="3" y2="230" z2="2" type="stone"/>
+        <DrawCuboid x1="4" y1="231" z1="-2" x2="4" y2="231" z2="2" type="stone"/>
+        <DrawCuboid x1="5" y1="232" z1="-2" x2="5" y2="232" z2="2" type="stone"/>
+        <DrawCuboid x1="6" y1="233" z1="-2" x2="6" y2="233" z2="2" type="gold_block"/>
       </DrawingDecorator>
-      <ServerQuitFromTimeUp description="" timeLimitMs="45000"/>
+      <ServerQuitFromTimeUp description="" timeLimitMs="90000"/>
       <ServerQuitWhenAnyAgentFinishes/>
     </ServerHandlers>
   </ServerSection>
@@ -60,18 +62,15 @@
         <Height>240</Height>
       </VideoProducer>
       <RewardForTouchingBlockType>
-        <Block type="lava" reward="-25"/>
+        <Block type="lava" reward="-10"/>
       </RewardForTouchingBlockType>
       <RewardForReachingPosition>
-        <Marker oneshot="true" reward="5" tolerance="1.1" x="1.5" y="229.0" z="0.5"/>
-        <Marker oneshot="true" reward="5" tolerance="1.1" x="2.5" y="230.0" z="0.5"/>
-        <Marker oneshot="true" reward="5" tolerance="1.1" x="3.5" y="231.0" z="0.5"/>
-        <Marker oneshot="true" reward="5" tolerance="1.1" x="4.5" y="232.0" z="0.5"/>
-        <Marker oneshot="true" reward="5" tolerance="1.1" x="5.5" y="233.0" z="0.5"/>
-        <Marker oneshot="true" reward="100" tolerance="1.1" x="6.5" y="234.0" z="0.5"/>
+        <Marker oneshot="true" reward="15" tolerance="0.6" x="2.5" y="230.0" z="0.5"/>
+        <Marker oneshot="true" reward="20" tolerance="0.6" x="4.5" y="232.0" z="0.5"/>
+        <Marker oneshot="true" reward="120" tolerance="0.6" x="6.5" y="234.0" z="0.5"/>
       </RewardForReachingPosition>
       <AgentQuitFromReachingPosition>
-        <Marker tolerance="1.1" x="6.5" y="234.0" z="0.5"/>
+        <Marker tolerance="0.6" x="6.5" y="234.0" z="0.5"/>
       </AgentQuitFromReachingPosition>
     </AgentHandlers>
   </AgentSection>

@@ -40,5 +40,5 @@ objective:
   tolerance: 1.1
 
 rewards:
-  reach_target: 100.0
-  touch_lava: -25.0
+  reach_target: 120.0
+  touch_lava: -10.0
