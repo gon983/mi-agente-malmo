@@ -25,6 +25,7 @@ agentedemalmo/
 
 - `config/world_rules.yaml`: variables del entorno/mundo (mision, objetivo, terreno, recompensas).
 - `config/agent_params.yaml`: variables del agente (politica, acciones, termination, run).
+- `config/README.md`: referencia completa de `agent_params.yaml` (tipos, opciones, efectos y limites).
 - `config/config.yaml`: runtime (rutas de YAML, host/port Malmo, logging).
 
 ## Ejecutar
