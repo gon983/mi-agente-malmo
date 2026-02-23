@@ -2,7 +2,7 @@
 Unified viewers for Malmo agent runs.
 
 `full`:
-- single realtime panel with Minecraft video frame + agent/environment metrics
+- compact realtime panel focused on video + RL-critical telemetry
 
 `terminal`:
 - minimal single-line updates
@@ -10,10 +10,8 @@ Unified viewers for Malmo agent runs.
 
 from __future__ import annotations
 
-import math
 import time
-from collections import deque
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Optional
 
 import numpy as np
 
@@ -40,34 +38,6 @@ def _as_optional_float(value: Any) -> Optional[float]:
         return None
 
 
-def _format_value(value: Any) -> str:
-    if isinstance(value, float):
-        return f"{value:.3f}"
-    return str(value)
-
-
-def _collect_scalars(data: Any, prefix: str = "", out: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-    if out is None:
-        out = {}
-
-    if isinstance(data, dict):
-        for key, value in data.items():
-            if key in {"_frame", "frame", "video"}:
-                continue
-            nested = f"{prefix}.{key}" if prefix else str(key)
-            _collect_scalars(value, nested, out)
-        return out
-
-    if isinstance(data, (list, tuple)):
-        if len(data) <= 6 and all(isinstance(v, (int, float, bool, str)) for v in data):
-            out[prefix] = "[" + ", ".join(_format_value(v) for v in data) + "]"
-        return out
-
-    if isinstance(data, (int, float, bool, str)) and prefix:
-        out[prefix] = data
-    return out
-
-
 class TerminalMinimalViewer:
     """
     Minimal terminal viewer: one compact line per step.
@@ -92,7 +62,7 @@ class TerminalMinimalViewer:
     def update_step(
         self,
         step: int,
-        action: Dict[str, float],
+        action: Dict[str, Any],
         observation: Dict[str, Any],
         reward: float,
         total_reward: float,
@@ -111,9 +81,17 @@ class TerminalMinimalViewer:
         x, y, z = self.last_pos
         life = self.last_life
 
-        move = _as_float(action.get("move"))
-        turn = _as_float(action.get("turn"))
-        jump = _as_float(action.get("jump"))
+        action_text = "-"
+        if isinstance(action, dict) and "action_command" in action:
+            idx = action.get("action_index")
+            action_text = f"id={idx} cmd={action.get('action_command')}"
+        elif isinstance(action, dict):
+            move = _as_float(action.get("move"))
+            turn = _as_float(action.get("turn"))
+            jump = _as_float(action.get("jump"))
+            action_text = f"m={move:+.2f},t={turn:+.2f},j={jump:.0f}"
+        elif action is not None:
+            action_text = str(action)
 
         dead_flag = ""
         if agent_metrics and agent_metrics.get("is_dead"):
@@ -123,7 +101,7 @@ class TerminalMinimalViewer:
             f"s={step:03d}/{self.max_steps:03d} "
             f"pos=({x:7.2f},{y:7.2f},{z:7.2f}) "
             f"life={life:5.1f} "
-            f"a[m={move:+.2f},t={turn:+.2f},j={jump:.0f}] "
+            f"a[{action_text}] "
             f"r={reward:+.2f} R={total_reward:+.2f}{dead_flag}"
         )
 
@@ -139,7 +117,7 @@ class TerminalMinimalViewer:
 
 class Unified3DViewer:
     """
-    Single realtime panel with game video + metrics/charts.
+    Compact realtime panel with game video + relevant RL telemetry.
     """
 
     def __init__(
@@ -193,42 +171,37 @@ class Unified3DViewer:
         self.avg_reward = 0.0
         self.life = 20.0
         self.current_action: Dict[str, float] = {}
+        self.current_action_index: Optional[int] = None
+        self.current_action_command: str = "-"
         self.current_pos = (0.0, 0.0, 0.0)
         self.has_valid_pose = False
         self.agent_metrics: Dict[str, Any] = {}
-        self.scalar_obs: Dict[str, Any] = {}
         self.frame: Optional[np.ndarray] = None
         self.start_time = time.time()
         self.episode_start = time.time()
-        self._scalar_page = 0
-        self._last_page_switch = time.time()
-
-        self.reward_history: deque[float] = deque(maxlen=history_size)
-        self.height_history: deque[float] = deque(maxlen=history_size)
-        self.trajectory: deque[Tuple[float, float]] = deque(maxlen=history_size)
 
         self._layout = self._build_layout()
 
     def _build_layout(self) -> Dict[str, "pygame.Rect"]:
         pad = 12
-        header_h = 40
-        video_h = int((self.height - header_h - 4 * pad) * 0.72)
+        header_h = 46
+        content_top = pad * 2 + header_h
+        content_h = self.height - content_top - pad
         left_w = int(self.width * 0.68)
 
         header = pygame.Rect(pad, pad, self.width - 2 * pad, header_h)
-        video = pygame.Rect(pad, pad * 2 + header_h, left_w - 2 * pad, video_h)
-        bottom_y = video.bottom + pad
-        bottom_h = self.height - bottom_y - pad
-        chart = pygame.Rect(pad, bottom_y, int(video.width * 0.58), bottom_h)
-        map_rect = pygame.Rect(chart.right + pad, bottom_y, video.width - chart.width - pad, bottom_h)
-        stats = pygame.Rect(left_w, pad * 2 + header_h, self.width - left_w - pad, self.height - header_h - 3 * pad)
+        video = pygame.Rect(pad, content_top, left_w - 2 * pad, content_h)
+        right_x = left_w
+        right_w = self.width - left_w - pad
+        vitals_h = int(content_h * 0.40)
+        vitals = pygame.Rect(right_x, content_top, right_w, vitals_h)
+        learning = pygame.Rect(right_x, vitals.bottom + pad, right_w, content_h - vitals_h - pad)
 
         return {
             "header": header,
             "video": video,
-            "chart": chart,
-            "map": map_rect,
-            "stats": stats,
+            "vitals": vitals,
+            "learning": learning,
         }
 
     def _process_events(self) -> None:
@@ -259,9 +232,8 @@ class Unified3DViewer:
         self.total_reward = 0.0
         self.avg_reward = 0.0
         self.episode_start = time.time()
-        self.reward_history.clear()
-        self.height_history.clear()
-        self.trajectory.clear()
+        self.current_action_index = None
+        self.current_action_command = "-"
 
     def update_step(
         self,
@@ -277,17 +249,32 @@ class Unified3DViewer:
             return
 
         self.current_step = step
-        self.current_action = {
-            "move": _as_float(action.get("move")),
-            "turn": _as_float(action.get("turn")),
-            "jump": _as_float(action.get("jump")),
-        }
+        self.current_action = {}
+        self.current_action_index = None
+        self.current_action_command = "-"
+        if isinstance(action, dict):
+            if "action_index" in action:
+                try:
+                    self.current_action_index = int(action.get("action_index"))
+                except (TypeError, ValueError):
+                    self.current_action_index = None
+            if "action_command" in action:
+                self.current_action_command = str(action.get("action_command"))
+            else:
+                # Fallback for old continuous-style actions.
+                move = _as_float(action.get("move"))
+                turn = _as_float(action.get("turn"))
+                jump = _as_float(action.get("jump"))
+                self.current_action = {"move": move, "turn": turn, "jump": jump}
+                self.current_action_command = f"m={move:+.2f} t={turn:+.2f} j={jump:.0f}"
+        elif action is not None:
+            self.current_action_command = str(action)
+
         self.current_reward = reward
         self.total_reward = total_reward
         self.avg_reward = total_reward / max(step, 1)
 
         self.frame = self._extract_frame(observation)
-        self.scalar_obs = _collect_scalars(observation)
         self.agent_metrics = dict(agent_metrics or {})
 
         x_obs = _as_optional_float(observation.get("XPos"))
@@ -300,11 +287,6 @@ class Unified3DViewer:
             self.has_valid_pose = True
         if life_obs is not None:
             self.life = life_obs
-
-        self.reward_history.append(self.total_reward)
-        if self.has_valid_pose:
-            self.height_history.append(self.current_pos[1])
-            self.trajectory.append((self.current_pos[0], self.current_pos[2]))
 
         self.render()
 
@@ -338,9 +320,8 @@ class Unified3DViewer:
 
         self._draw_header(self._layout["header"])
         self._draw_video(self._layout["video"])
-        self._draw_chart(self._layout["chart"])
-        self._draw_map(self._layout["map"])
-        self._draw_stats(self._layout["stats"])
+        self._draw_vitals(self._layout["vitals"])
+        self._draw_learning(self._layout["learning"])
 
         pygame.display.flip()
         self.clock.tick(self.fps_limit)
@@ -364,7 +345,7 @@ class Unified3DViewer:
 
         title = self.font_title.render("MALMO AGENT", True, self.colors["text_main"])
         self.screen.blit(title, (rect.x + 10, rect.y + 8))
-        subtitle = self.font_small.render("single panel | video + telemetry", True, self.colors["text_muted"])
+        subtitle = self.font_small.render("full viewer | focused telemetry", True, self.colors["text_muted"])
         self.screen.blit(subtitle, (rect.x + 250, rect.y + 18))
 
         elapsed = time.time() - self.start_time
@@ -414,185 +395,59 @@ class Unified3DViewer:
         info = self.font_small.render(f"frame {frame_w}x{frame_h}", True, self.colors["text_muted"])
         self.screen.blit(info, (body.x + 10, body.y + 8))
 
-    def _draw_chart(self, rect: "pygame.Rect") -> None:
-        self._draw_panel(rect, "Reward + Height")
-        area = rect.inflate(-20, -40)
-        area.y += 20
-
-        if not self.reward_history:
-            return
-
-        reward_rect = pygame.Rect(area.x, area.y, area.width, int(area.height * 0.52))
-        height_rect = pygame.Rect(area.x, reward_rect.bottom + 8, area.width, area.height - reward_rect.height - 8)
-
-        self._draw_line_series(
-            reward_rect,
-            list(self.reward_history),
-            line_color=self.colors["accent_green"],
-            title="total_reward",
-        )
-        self._draw_line_series(
-            height_rect,
-            list(self.height_history),
-            line_color=self.colors["accent_blue"],
-            title="height_y",
-        )
-
-    def _draw_line_series(
-        self,
-        rect: "pygame.Rect",
-        values: List[float],
-        line_color: Tuple[int, int, int],
-        title: str,
-    ) -> None:
-        pygame.draw.rect(self.screen, (11, 18, 27), rect, border_radius=6)
-        pygame.draw.rect(self.screen, self.colors["panel_border"], rect, width=1, border_radius=6)
-
-        if not values:
-            return
-
-        lo = min(values)
-        hi = max(values)
-        span = hi - lo
-
-        if len(values) == 1 or span < 1e-6:
-            y_mid = rect.y + rect.height // 2
-            pygame.draw.line(
-                self.screen,
-                line_color,
-                (rect.x + 1, y_mid),
-                (rect.right - 2, y_mid),
-                2,
-            )
-        else:
-            points: List[Tuple[int, int]] = []
-            for idx, value in enumerate(values):
-                x = rect.x + int(idx / (len(values) - 1) * (rect.width - 1))
-                y_norm = (value - lo) / span
-                y = rect.bottom - 1 - int(y_norm * (rect.height - 1))
-                points.append((x, y))
-
-            if len(points) >= 2:
-                pygame.draw.lines(self.screen, line_color, False, points, 2)
-
-        title_text = self.font_small.render(
-            f"{title}: min={lo:.2f} max={hi:.2f} last={values[-1]:.2f}",
-            True,
-            self.colors["text_muted"],
-        )
-        self.screen.blit(title_text, (rect.x + 8, rect.y + 6))
-
-    def _draw_map(self, rect: "pygame.Rect") -> None:
-        self._draw_panel(rect, "Trajectory (X,Z)")
-        area = rect.inflate(-20, -40)
-        area.y += 20
-
-        pygame.draw.rect(self.screen, (11, 18, 27), area, border_radius=6)
-        pygame.draw.rect(self.screen, self.colors["panel_border"], area, width=1, border_radius=6)
-
-        if len(self.trajectory) < 2:
-            return
-
-        xs = [p[0] for p in self.trajectory]
-        zs = [p[1] for p in self.trajectory]
-        min_x, max_x = min(xs), max(xs)
-        min_z, max_z = min(zs), max(zs)
-        span_x = max(max_x - min_x, 1e-6)
-        span_z = max(max_z - min_z, 1e-6)
-
-        points: List[Tuple[int, int]] = []
-        for x, z in self.trajectory:
-            px = area.x + int((x - min_x) / span_x * (area.width - 1))
-            pz = area.bottom - 1 - int((z - min_z) / span_z * (area.height - 1))
-            points.append((px, pz))
-
-        if len(points) >= 2:
-            pygame.draw.lines(self.screen, self.colors["accent_orange"], False, points, 2)
-        pygame.draw.circle(self.screen, (255, 232, 163), points[-1], 5)
-
-        label = self.font_small.render(
-            f"range x={min_x:.2f}..{max_x:.2f} z={min_z:.2f}..{max_z:.2f}",
-            True,
-            self.colors["text_muted"],
-        )
-        self.screen.blit(label, (area.x + 8, area.y + 6))
-
-    def _draw_stats(self, rect: "pygame.Rect") -> None:
-        self._draw_panel(rect, "Live Metrics")
+    def _draw_vitals(self, rect: "pygame.Rect") -> None:
+        self._draw_panel(rect, "Vitals")
         area = rect.inflate(-20, -40)
         area.y += 20
 
         x = area.x
         y = area.y
-
-        state_title = self.font.render("Agent State", True, self.colors["panel_header"])
-        self.screen.blit(state_title, (x, y))
-        y += 20
-
         px, py, pz = self.current_pos
+
         lines = [
-            f"agent.policy: {self.agent_metrics.get('policy', self.policy)}",
-            f"agent.step_count: {self.agent_metrics.get('step_count', self.current_step)}",
-            f"agent.total_reward: {self.total_reward:.3f}",
-            f"agent.avg_reward: {self.avg_reward:.3f}",
-            f"agent.life: {self.agent_metrics.get('life', self.life)}",
-            f"agent.is_dead: {self.agent_metrics.get('is_dead', False)}",
-            f"agent.target_height: {self.agent_metrics.get('target_height', '-')}",
-            f"agent.max_height: {self.agent_metrics.get('max_height', '-')}",
+            f"reward_now: {self.current_reward:+.3f}",
+            f"reward_total: {self.total_reward:+.3f}",
+            f"reward_avg: {self.avg_reward:+.3f}",
+            f"life: {self.life:.1f}",
             f"pos: x={px:.2f} y={py:.2f} z={pz:.2f}",
+            f"is_dead: {self.agent_metrics.get('is_dead', False)}",
         ]
         for line in lines:
             surf = self.font_small.render(line, True, self.colors["text_main"])
             self.screen.blit(surf, (x, y))
-            y += 18
+            y += 20
 
         y += 6
         self._draw_life_bar(x, y, area.width, 12, self.life, 20.0)
-        y += 24
 
-        controls_title = self.font.render("Controls", True, self.colors["panel_header"])
-        self.screen.blit(controls_title, (x, y))
-        y += 20
+    def _draw_learning(self, rect: "pygame.Rect") -> None:
+        self._draw_panel(rect, "Saved State + Learning")
+        area = rect.inflate(-20, -40)
+        area.y += 20
 
-        self._draw_action_bar(x, y, area.width, "move", self.current_action.get("move", 0.0), -1.0, 1.0)
-        y += 26
-        self._draw_action_bar(x, y, area.width, "turn", self.current_action.get("turn", 0.0), -1.0, 1.0)
-        y += 26
-        self._draw_action_bar(x, y, area.width, "jump", self.current_action.get("jump", 0.0), 0.0, 1.0)
-        y += 30
+        x = area.x
+        y = area.y
+        lines = [
+            f"action_idx: {self.current_action_index if self.current_action_index is not None else '-'}",
+            f"action_cmd: {self.current_action_command}",
+            f"last_state: {self.agent_metrics.get('last_state', '-')}",
+            f"q_states: {self.agent_metrics.get('q_states', '-')}",
+            f"q_table: {self.agent_metrics.get('q_table_path', '-')}",
+            f"epsilon: {self.agent_metrics.get('epsilon', '-')}",
+            f"alpha: {self.agent_metrics.get('alpha', '-')}",
+            f"gamma: {self.agent_metrics.get('gamma', '-')}",
+            f"policy: {self.agent_metrics.get('policy', self.policy)}",
+            f"step: {self.current_step}/{self.max_steps}",
+        ]
 
-        obs_title = self.font.render("Environment Scalars", True, self.colors["panel_header"])
-        self.screen.blit(obs_title, (x, y))
-        y += 20
-
-        remaining_h = area.bottom - y - 4
-        row_h = 16
-        max_rows = max(1, remaining_h // row_h)
-        items = sorted(self.scalar_obs.items(), key=lambda kv: kv[0])
-
-        total_pages = max(1, math.ceil(len(items) / max_rows))
-        now = time.time()
-        if total_pages > 1 and now - self._last_page_switch > 2.0:
-            self._scalar_page = (self._scalar_page + 1) % total_pages
-            self._last_page_switch = now
-
-        start = self._scalar_page * max_rows
-        end = start + max_rows
-        page_items = items[start:end]
-
-        for key, value in page_items:
-            text = f"{key}: {_format_value(value)}"
-            surf = self.font_small.render(text, True, self.colors["text_muted"])
+        max_chars = max(24, area.width // 8)
+        for line in lines:
+            text = str(line)
+            if len(text) > max_chars:
+                text = text[: max_chars - 3] + "..."
+            surf = self.font_small.render(text, True, self.colors["text_main"])
             self.screen.blit(surf, (x, y))
-            y += row_h
-
-        if total_pages > 1:
-            footer = self.font_small.render(
-                f"page {self._scalar_page + 1}/{total_pages}",
-                True,
-                self.colors["text_muted"],
-            )
-            self.screen.blit(footer, (area.right - footer.get_width(), area.bottom - 16))
+            y += 20
 
     def _draw_life_bar(
         self,
@@ -613,25 +468,6 @@ class Unified3DViewer:
         )
         label = self.font_small.render(f"life: {current:.1f}/{max_value:.1f}", True, self.colors["text_main"])
         self.screen.blit(label, (x, y - 14))
-
-    def _draw_action_bar(
-        self,
-        x: int,
-        y: int,
-        width: int,
-        name: str,
-        value: float,
-        min_value: float,
-        max_value: float,
-    ) -> None:
-        label_y = y - 14
-        pygame.draw.rect(self.screen, (18, 26, 37), (x, y, width, 10), border_radius=4)
-        span = max(max_value - min_value, 1e-6)
-        ratio = max(0.0, min(1.0, (value - min_value) / span))
-        fill = int(width * ratio)
-        pygame.draw.rect(self.screen, self.colors["accent_blue"], (x, y, fill, 10), border_radius=4)
-        label = self.font_small.render(f"{name}: {value:+.3f}", True, self.colors["text_main"])
-        self.screen.blit(label, (x, label_y))
 
     def end_episode(self) -> None:
         pass

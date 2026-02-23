@@ -4,9 +4,9 @@ Conector para Microsoft Malmo
 Maneja la comunicación entre el agente y Minecraft via malmoenv.
 """
 
-import time
 import logging
 from pathlib import Path
+from numbers import Integral
 from typing import Dict, Any, Optional, Tuple, List, Set
 
 try:
@@ -147,12 +147,12 @@ class MalmoConnector:
         
         return self.env.reset()
     
-    def step(self, action: Dict[str, float]) -> Tuple[Any, float, bool, Dict]:
+    def step(self, action: Any) -> Tuple[Any, float, bool, Dict]:
         """
         Ejecuta una acción en el entorno.
         
         Args:
-            action: Diccionario con las acciones (move, turn, jump, etc.)
+            action: Accion del agente (indice discreto, comando o diccionario)
             
         Returns:
             Tupla (observación, recompensa, done, info)
@@ -168,12 +168,12 @@ class MalmoConnector:
         
         return obs, reward, done, info
     
-    def _dict_to_action_array(self, action_dict: Dict[str, float]) -> Any:
+    def _dict_to_action_array(self, action: Any) -> Any:
         """
         Convierte diccionario de acciones a array para malmoenv.
         
         Args:
-            action_dict: Diccionario con acciones
+            action: Accion del agente
             
         Returns:
             Array de acciones compatible con el entorno
@@ -184,12 +184,13 @@ class MalmoConnector:
 
             # malmoenv commonly uses a discrete action space with string commands.
             if isinstance(actions, list) and len(actions) > 0:
-                return self._dict_to_discrete_index(action_dict, actions, action_space.sample)
+                return self._dict_to_discrete_index(action, actions, action_space.sample)
 
             # Fallback for continuous-like spaces.
             sampled = action_space.sample()
             if hasattr(sampled, '__len__'):
                 action_list = list(sampled)
+                action_dict = action if isinstance(action, dict) else {}
                 action_list[0] = action_dict.get('move', 0.0)
                 if len(action_list) > 1:
                     action_list[1] = action_dict.get('turn', 0.0)
@@ -199,13 +200,44 @@ class MalmoConnector:
             return sampled
 
         # Last resort.
-        return [action_dict.get('move', 0.0), action_dict.get('turn', 0.0), action_dict.get('jump', 0.0)]
+        if isinstance(action, dict):
+            return [action.get('move', 0.0), action.get('turn', 0.0), action.get('jump', 0.0)]
+        return action
 
-    def _dict_to_discrete_index(self, action_dict: Dict[str, float], actions: List[str], sample_fn) -> int:
+    def _dict_to_discrete_index(self, action: Any, actions: List[str], sample_fn) -> int:
         """
-        Convert move/turn/jump values into the closest discrete Malmo command index.
+        Convert agent action into a discrete Malmo command index.
         """
         index_by_cmd = {cmd: idx for idx, cmd in enumerate(actions)}
+
+        if isinstance(action, Integral):
+            candidate = int(action)
+            return candidate if 0 <= candidate < len(actions) else sample_fn()
+
+        if isinstance(action, str):
+            command = " ".join(action.strip().split())
+            if command in index_by_cmd:
+                return index_by_cmd[command]
+            return sample_fn()
+
+        action_dict = action if isinstance(action, dict) else {}
+        if "action_command" in action_dict:
+            command = " ".join(str(action_dict["action_command"]).strip().split())
+            if command in index_by_cmd:
+                return index_by_cmd[command]
+            # Command given but not available in this mission/action filter.
+            return sample_fn()
+
+        if "action_index" in action_dict:
+            # Fallback only: this index is assumed to already match env.action_space.actions.
+            try:
+                candidate = int(action_dict["action_index"])
+                if 0 <= candidate < len(actions):
+                    return candidate
+            except (TypeError, ValueError):
+                pass
+            return sample_fn()
+
         move = float(action_dict.get("move", 0.0))
         turn = float(action_dict.get("turn", 0.0))
         jump = float(action_dict.get("jump", 0.0))

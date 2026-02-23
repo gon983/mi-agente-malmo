@@ -14,6 +14,7 @@ agentedemalmo/
 |   `-- agent_params.yaml
 |-- missions/
 |   |-- simple_test.xml
+|   |-- climb_train.xml
 |   `-- climb_challenge.xml
 |-- utils/
 |   |-- malmo_connector.py
@@ -24,7 +25,7 @@ agentedemalmo/
 ## Configuracion
 
 - `config/world_rules.yaml`: variables del entorno/mundo (mision, objetivo, terreno, recompensas).
-- `config/agent_params.yaml`: variables del agente (politica, acciones, termination, run).
+- `config/agent_params.yaml`: variables del agente Q-learning (run, behavior, state, actions, learning, termination).
 - `config/README.md`: referencia completa de `agent_params.yaml` (tipos, opciones, efectos y limites).
 - `config/config.yaml`: runtime (rutas de YAML, host/port Malmo, logging).
 

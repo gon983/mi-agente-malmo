@@ -17,52 +17,79 @@ import sys
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 
 # Add current project root to import path
 sys.path.insert(0, str(Path(__file__).parent))
 
-from agents.basic_agent import (  # noqa: E402
-    DEFAULT_AGENT_PARAMS,
-    DEFAULT_WORLD_RULES,
-    BasicAgent,
-    load_yaml_config,
-)
+from agents.basic_agent import BasicAgent, load_yaml_config  # noqa: E402
 from utils.malmo_connector import MalmoConnector  # noqa: E402
 from utils.viewer_3d import create_unified_viewer  # noqa: E402
 
 
-DEFAULT_RUNTIME_CONFIG: Dict[str, Any] = {
-    "paths": {
-        "world_rules": "config/world_rules.yaml",
-        "agent_params": "config/agent_params.yaml",
-    },
-    "malmo": {
-        "port": 9000,
-        "server": "127.0.0.1",
-        "role": 0,
-        "experiment_id": "experiment",
-        "mission": "missions/simple_test.xml",
-    },
-    "logging": {
-        "level": "INFO",
-        "log_dir": "logs",
-    },
-}
+def _require_mapping(data: Dict[str, Any], key: str, context: str) -> Dict[str, Any]:
+    value = data.get(key)
+    if not isinstance(value, dict):
+        raise ValueError(f"Missing or invalid mapping '{context}.{key}'")
+    return value
+
+
+def _require_list(data: Dict[str, Any], key: str, context: str) -> List[Any]:
+    value = data.get(key)
+    if not isinstance(value, list):
+        raise ValueError(f"Missing or invalid list '{context}.{key}'")
+    return value
+
+
+def _require_bool(data: Dict[str, Any], key: str, context: str) -> bool:
+    value = data.get(key)
+    if isinstance(value, bool):
+        return value
+    raise ValueError(f"Missing or invalid bool '{context}.{key}'")
+
+
+def _require_str(data: Dict[str, Any], key: str, context: str) -> str:
+    value = data.get(key)
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"Missing or invalid string '{context}.{key}'")
+    return value.strip()
+
+
+def _require_int(data: Dict[str, Any], key: str, context: str, min_value: Optional[int] = None) -> int:
+    value = data.get(key)
+    if not isinstance(value, int):
+        raise ValueError(f"Missing or invalid int '{context}.{key}'")
+    if min_value is not None and value < min_value:
+        raise ValueError(f"'{context}.{key}' must be >= {min_value}")
+    return value
+
+
+def _require_float(data: Dict[str, Any], key: str, context: str, min_value: Optional[float] = None) -> float:
+    value = data.get(key)
+    if not isinstance(value, (float, int)):
+        raise ValueError(f"Missing or invalid float '{context}.{key}'")
+    casted = float(value)
+    if min_value is not None and casted < min_value:
+        raise ValueError(f"'{context}.{key}' must be >= {min_value}")
+    return casted
 
 
 def setup_logging(config: Dict[str, Any]) -> None:
-    log_cfg = config.get("logging", {})
-    log_dir = Path(log_cfg.get("log_dir", "logs"))
-    log_dir.mkdir(exist_ok=True)
+    log_cfg = _require_mapping(config, "logging", "runtime config")
+    log_dir = Path(_require_str(log_cfg, "log_dir", "runtime config.logging"))
+    level_name = _require_str(log_cfg, "level", "runtime config.logging").upper()
+    log_level = getattr(logging, level_name, None)
+    if not isinstance(log_level, int):
+        raise ValueError(f"Invalid logging level: {level_name}")
 
+    log_dir.mkdir(exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     log_file = log_dir / f"run_{timestamp}.log"
 
     logging.basicConfig(
-        level=getattr(logging, str(log_cfg.get("level", "INFO")).upper(), logging.INFO),
+        level=log_level,
         format="%(asctime)s - %(levelname)s - %(message)s",
         handlers=[logging.FileHandler(log_file), logging.StreamHandler()],
     )
@@ -130,7 +157,22 @@ def run_episode(
     done = False
     step = 0
     frame_shape = getattr(getattr(connector, "observation_space", None), "shape", None)
-    last_scalars: Dict[str, Any] = {}
+    last_known: Dict[str, Any] = {}
+
+    tracked_keys = [
+        "XPos",
+        "YPos",
+        "ZPos",
+        "Life",
+        "Yaw",
+        "Pitch",
+        "WorldTime",
+        "TotalTime",
+    ]
+    if agent.include_floor_grid:
+        tracked_keys.append(agent.floor_grid_key)
+    if agent.include_line_of_sight:
+        tracked_keys.append("LineOfSight")
 
     while not done and step < max_steps:
         obs_dict = parse_observation(obs, frame_shape=frame_shape)
@@ -139,19 +181,19 @@ def run_episode(
         obs, reward, done, info = connector.step(action)
         next_obs = parse_observation(obs, info, frame_shape=frame_shape)
 
-        # Some ticks can arrive without info payload; keep last known scalar state.
-        for key, value in last_scalars.items():
+        # Some ticks can arrive without payload; keep last known state features.
+        for key, value in last_known.items():
             next_obs.setdefault(key, value)
-        for key in ("XPos", "YPos", "ZPos", "Life", "Yaw", "Pitch", "WorldTime", "TotalTime"):
+        for key in tracked_keys:
             if key in next_obs:
-                last_scalars[key] = next_obs[key]
+                last_known[key] = next_obs[key]
 
         agent.process_observation(next_obs)
         if agent.should_terminate():
             done = True
 
         reward_value = float(reward)
-        agent.process_reward(reward_value)
+        agent.process_reward(reward_value, next_observation=next_obs, done=done)
 
         step += 1
 
@@ -186,8 +228,8 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         "--policy",
         type=str,
         default=None,
-        choices=["random", "forward", "explore"],
-        help="Policy override",
+        choices=["explore"],
+        help="Policy override (only explore supported)",
     )
     parser.add_argument(
         "--viewer",
@@ -203,25 +245,20 @@ def main() -> None:
     args = _build_arg_parser().parse_args()
     repo_root = Path(__file__).resolve().parent
 
-    runtime_cfg = load_yaml_config(args.config, DEFAULT_RUNTIME_CONFIG)
-    world_rules_path = args.world_rules or runtime_cfg.get("paths", {}).get("world_rules", "config/world_rules.yaml")
-    agent_params_path = args.agent_params or runtime_cfg.get("paths", {}).get("agent_params", "config/agent_params.yaml")
+    runtime_cfg = load_yaml_config(args.config, strict=True)
+    paths_cfg = _require_mapping(runtime_cfg, "paths", "runtime config")
+    world_rules_path = args.world_rules or _require_str(paths_cfg, "world_rules", "runtime config.paths")
+    agent_params_path = args.agent_params or _require_str(paths_cfg, "agent_params", "runtime config.paths")
 
-    world_rules = load_yaml_config(world_rules_path, DEFAULT_WORLD_RULES)
-    agent_params = load_yaml_config(agent_params_path, DEFAULT_AGENT_PARAMS)
+    world_rules = load_yaml_config(world_rules_path, strict=True)
+    agent_params = load_yaml_config(agent_params_path, strict=True)
 
-    world_cfg = world_rules.setdefault("world", {})
-    world_server = world_cfg.setdefault("server", {})
-    runtime_malmo = runtime_cfg.get("malmo", {})
-    behavior_cfg = agent_params.setdefault("behavior", {})
-    run_cfg = agent_params.setdefault("run", {})
-
-    # Keep backward compatibility with config/config.yaml defaults.
-    world_server.setdefault("host", runtime_malmo.get("server", "127.0.0.1"))
-    world_server.setdefault("port", runtime_malmo.get("port", 9000))
-    world_server.setdefault("role", runtime_malmo.get("role", 0))
-    world_server.setdefault("experiment_id", runtime_malmo.get("experiment_id", "experiment"))
-    world_cfg.setdefault("mission_file", runtime_malmo.get("mission", "missions/simple_test.xml"))
+    world_cfg = _require_mapping(world_rules, "world", "world_rules")
+    world_server = _require_mapping(world_cfg, "server", "world_rules.world")
+    behavior_cfg = _require_mapping(agent_params, "behavior", "agent_params")
+    run_cfg = _require_mapping(agent_params, "run", "agent_params")
+    actions_cfg = _require_mapping(agent_params, "actions", "agent_params")
+    discrete_actions = _require_list(actions_cfg, "discrete", "agent_params.actions")
 
     if args.port is not None:
         world_server["port"] = args.port
@@ -236,7 +273,7 @@ def main() -> None:
 
     setup_logging(runtime_cfg)
 
-    mission_rel_path = str(world_cfg.get("mission_file", "missions/simple_test.xml"))
+    mission_rel_path = _require_str(world_cfg, "mission_file", "world_rules.world")
     mission_path = Path(mission_rel_path)
     if not mission_path.is_absolute():
         mission_path = repo_root / mission_rel_path
@@ -246,15 +283,31 @@ def main() -> None:
         print(f"Mission file not found: {mission_path}")
         sys.exit(1)
 
-    episodes = int(run_cfg.get("episodes", 5))
-    max_steps = int(run_cfg.get("max_steps", 50))
-    policy = str(behavior_cfg.get("policy", "explore"))
+    episodes = _require_int(run_cfg, "episodes", "agent_params.run", min_value=1)
+    max_steps = _require_int(run_cfg, "max_steps", "agent_params.run", min_value=1)
+    policy = _require_str(behavior_cfg, "policy", "agent_params.behavior")
+    if policy != "explore":
+        raise ValueError("Only 'explore' policy is supported.")
+
+    host = _require_str(world_server, "host", "world_rules.world.server")
+    port = _require_int(world_server, "port", "world_rules.world.server", min_value=1)
+    role = _require_int(world_server, "role", "world_rules.world.server", min_value=0)
+    experiment_id = _require_str(world_server, "experiment_id", "world_rules.world.server")
+
+    action_commands = []
+    for index, command in enumerate(discrete_actions):
+        if not isinstance(command, str) or not command.strip():
+            raise ValueError(f"Invalid command in agent_params.actions.discrete[{index}]")
+        action_commands.append(command.strip())
+    action_filter = {item.split()[0] for item in action_commands}
+    if not action_filter:
+        raise ValueError("No valid action roots found in agent_params.actions.discrete")
 
     print("=" * 72)
     print("MALMO AGENT")
     print("=" * 72)
     print(f"mission       : {mission_path}")
-    print(f"server        : {world_server.get('host')}:{world_server.get('port')}")
+    print(f"server        : {host}:{port}")
     print(f"policy        : {policy}")
     print(f"episodes      : {episodes}")
     print(f"max_steps     : {max_steps}")
@@ -265,24 +318,25 @@ def main() -> None:
 
     connector = MalmoConnector(
         mission_xml=str(mission_path),
-        port=int(world_server.get("port", 9000)),
-        server=str(world_server.get("host", "127.0.0.1")),
-        role=int(world_server.get("role", 0)),
-        experiment_id=str(world_server.get("experiment_id", "experiment")),
+        port=port,
+        server=host,
+        role=role,
+        experiment_id=experiment_id,
+        action_filter=action_filter,
     )
 
     if not connector.connect():
         print("\nCould not connect to Malmo.")
         print("Start Minecraft Malmo first, for example:")
         print(f"  cd c:\\Users\\gonza\\malmo\\Minecraft")
-        print(f"  launchClient.bat -port {world_server.get('port', 9000)} -env")
+        print(f"  launchClient.bat -port {port} -env")
         sys.exit(1)
 
     viewer = create_unified_viewer(args.viewer)
     agent = BasicAgent(
         policy=policy,
-        action_delay=float(behavior_cfg.get("action_delay", 0.05)),
-        verbose=bool(behavior_cfg.get("verbose", True)) and args.viewer == "none",
+        action_delay=_require_float(behavior_cfg, "action_delay", "agent_params.behavior", min_value=0.0),
+        verbose=_require_bool(behavior_cfg, "verbose", "agent_params.behavior") and args.viewer == "none",
         agent_params=agent_params,
         world_rules=world_rules,
     )
@@ -301,16 +355,26 @@ def main() -> None:
             stats = run_episode(connector, agent, max_steps=max_steps, viewer=viewer)
             all_stats.append(stats)
 
+            if agent.autosave_each_episode:
+                agent.save_q_table()
+
             if viewer:
                 viewer.end_episode()
             else:
                 print(
                     f"steps={stats['steps']} total_reward={stats['total_reward']:.2f} "
-                    f"avg_reward={stats['avg_reward']:.4f} died={stats.get('died')}"
+                    f"avg_reward={stats['avg_reward']:.4f} died={stats.get('died')} "
+                    f"q_states={stats.get('q_states')}"
                 )
     except KeyboardInterrupt:
         print("\nStopped by user.")
     finally:
+        # Always persist latest values once more at shutdown.
+        try:
+            agent.save_q_table()
+        except Exception as exc:  # pragma: no cover - defensive shutdown path
+            print(f"Warning: could not save q-table: {exc}")
+
         if viewer:
             viewer.close()
         connector.close()
@@ -329,6 +393,8 @@ def main() -> None:
         print(f"avg_reward   : {avg_reward:.2f}")
         print(f"deaths       : {deaths}")
         print(f"max_height   : {max_height:.2f}")
+        print(f"q_states     : {len(agent.q_table)}")
+        print(f"q_table_path : {agent.q_table_path}")
         print("=" * 72)
 
 

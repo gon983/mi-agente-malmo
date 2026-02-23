@@ -1,31 +1,34 @@
 run:
-  episodes: 1
-  max_steps: 1000
+  episodes: 150
+  max_steps: 400
 
 behavior:
   policy: "explore"
-  action_delay: 0.05
-  verbose: true
+  action_delay: 0.2
+  verbose: false
+
+state:
+  position_bin_size: 1.0
+  y_bin_size: 1.0
+  yaw_bins: 8
+  floor_grid_key: "floor5x5"
+  include_floor_grid: true
+  include_line_of_sight: true
 
 actions:
-  random:
-    move_min: -1.0
-    move_max: 1.0
-    turn_min: -1.0
-    turn_max: 1.0
-    jump_probability: 0.25
-  forward:
-    move: 1.0
-    turn: 0.0
-    jump: 1.0
-  explore:
-    turn_interval: 10
-    turn_choices: [-1.0, 1.0]
-    move: 1.0
-    turn_jitter_min: -0.2
-    turn_jitter_max: 0.2
-    jump: 0.0
-    jump_probability: 0.35
+  discrete:
+    - "move 1"
+    - "turn -1"
+    - "turn 1"
+    - "jump 1"
+    - "move 0"
+
+learning:
+  alpha: 0.1
+  gamma: 0.99
+  epsilon: 0.0
+  q_table_path: "artifacts/q_table_compact.json"
+  autosave_each_episode: true
 
 termination:
   death_on_zero_life: true

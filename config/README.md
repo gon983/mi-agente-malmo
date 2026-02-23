@@ -1,49 +1,52 @@
-# Referencia completa de `agent_params.yaml`
+# Referencia completa de `agent_params.yaml` (modo Q-learning)
 
-Este documento describe todo lo que el agente soporta hoy en `config/agent_params.yaml`, sin depender de los valores actuales.
+Este documento describe el esquema actual del agente:
 
-## Alcance y precedencia
+1. Sin defaults silenciosos para `agent_params`.
+2. Politica unica: `explore`.
+3. Estado discreto para tabla Q.
+4. Acciones discretas explicitas.
+5. Aprendizaje tabular con `alpha`, `gamma`, `epsilon`.
 
-El comportamiento final sale de esta precedencia (de menor a mayor prioridad):
+## Regla principal: modo estricto
 
-1. Defaults en codigo (`agents/basic_agent.py`, `DEFAULT_AGENT_PARAMS`).
-2. Valores del YAML (`config/agent_params.yaml`).
-3. Overrides por CLI en `run_agent.py` (`--policy`, `--episodes`, `--max-steps`).
+El runner carga `agent_params.yaml` en modo estricto:
 
-Si falta una clave en el YAML, se usa el default del codigo.
+1. Si el archivo no existe, falla.
+2. Si falta una clave requerida, falla.
+3. Si un tipo/rango no coincide, falla.
+
+No hay fallback automatico en `agent_params`.
 
 ## Esquema global
 
 ```yaml
 run:
-  episodes: <int>
-  max_steps: <int>
+  episodes: <int >= 1>
+  max_steps: <int >= 1>
 
 behavior:
-  policy: <string>
-  action_delay: <float>
+  policy: "explore"
+  action_delay: <float >= 0>
   verbose: <bool>
 
+state:
+  position_bin_size: <float > 0>
+  y_bin_size: <float > 0>
+  yaw_bins: <int >= 1>
+  floor_grid_key: <string>
+  include_floor_grid: <bool>
+  include_line_of_sight: <bool>
+
 actions:
-  random:
-    move_min: <float>
-    move_max: <float>
-    turn_min: <float>
-    turn_max: <float>
-    jump_probability: <float>
-  forward:
-    move: <float>
-    turn: <float>
-    jump: <float>
-    jump_probability: <float opcional>
-  explore:
-    turn_interval: <int>
-    turn_choices: <list[float]>
-    move: <float>
-    turn_jitter_min: <float>
-    turn_jitter_max: <float>
-    jump: <float>
-    jump_probability: <float opcional>
+  discrete: <list[string] exacto de 5 comandos>
+
+learning:
+  alpha: <float [0,1]>
+  gamma: <float [0,1]>
+  epsilon: <float [0,1]>
+  q_table_path: <string path>
+  autosave_each_episode: <bool>
 
 termination:
   death_on_zero_life: <bool>
@@ -52,123 +55,101 @@ termination:
 
 ## Bloque `run`
 
-Controla cuanto dura la ejecucion global.
-
-| Variable | Tipo / opciones | Que cambia al modificarla | Notas |
-|---|---|---|---|
-| `run.episodes` | `int` (esperado >= 1) | Sube o baja la cantidad de episodios totales. | Se puede overridear con `--episodes`. |
-| `run.max_steps` | `int` (esperado >= 1) | Sube o baja el maximo de pasos por episodio. | El episodio termina por `done`, muerte o este limite, lo que ocurra primero. Tambien existe limite de tiempo de mision en XML. |
+| Variable | Tipo | Efecto |
+|---|---|---|
+| `run.episodes` | `int >= 1` | Cantidad de episodios totales. |
+| `run.max_steps` | `int >= 1` | Maximo de pasos por episodio. |
 
 ## Bloque `behavior`
 
-Define la politica activa y la cadencia del loop.
+| Variable | Tipo | Efecto |
+|---|---|---|
+| `behavior.policy` | Solo `"explore"` | Politica obligatoria en esta version. |
+| `behavior.action_delay` | `float >= 0` | Pausa entre pasos (`time.sleep`). |
+| `behavior.verbose` | `bool` | Logs de estado/reward en consola. |
 
-| Variable | Tipo / opciones | Que cambia al modificarla | Notas |
-|---|---|---|---|
-| `behavior.policy` | `random`, `forward`, `explore` | Cambia la forma de elegir acciones. | Si pones otra cadena no soportada, el agente cae en fallback a `random`. Se puede overridear con `--policy`. |
-| `behavior.action_delay` | `float` segundos (esperado >= 0) | Controla la pausa entre pasos (`time.sleep`). | Valores altos hacen ejecucion mas lenta. Valores 0 o chicos aceleran, pero pueden volver menos legible el debug visual. |
-| `behavior.verbose` | `true` / `false` | Activa o desactiva prints de estado/recompensas. | Si usas `--viewer terminal` o `--viewer full`, el runner fuerza `verbose` efectivo a `false` para evitar ruido duplicado. |
+## Bloque `state`
+
+Define como se construye el estado discreto para la Q-table.
+
+Estado usado por el agente:
+
+1. `x_bin`: `XPos` cuantizado por `position_bin_size`.
+2. `y_bin`: `YPos` cuantizado por `y_bin_size` (progreso de escalada).
+3. `z_bin`: `ZPos` cuantizado por `position_bin_size`.
+4. `yaw_bin`: `Yaw` cuantizado en `yaw_bins`.
+5. `center_code`: tipo del bloque central del `floor5x5` (aire/solido/lava/desconocido).
+6. `lava_bucket`: bucket de cantidad de celdas de lava en el grid (`0`, `1-2`, `3+`).
+7. `air_bucket`: bucket de cantidad de celdas de aire en el grid (`0`, `1-2`, `3+`).
+8. `los_code`: tipo de bloque visto por `LineOfSight` (si `include_line_of_sight=true`).
+
+| Variable | Tipo | Efecto |
+|---|---|---|
+| `state.position_bin_size` | `float > 0` | Granularidad espacial en X/Z. Menor valor = mas estados. |
+| `state.y_bin_size` | `float > 0` | Granularidad vertical. Menor valor = mas estados por altura. |
+| `state.yaw_bins` | `int >= 1` | Resolucion angular. Mas bins = mas estados. |
+| `state.floor_grid_key` | `string` | Clave de observacion del grid (ejemplo: `floor5x5`). |
+| `state.include_floor_grid` | `bool` | Activa/desactiva el uso de buckets del grid en el estado. |
+| `state.include_line_of_sight` | `bool` | Activa/desactiva `LineOfSight` en el estado. |
 
 ## Bloque `actions`
 
-Este bloque contiene parametros por politica. Solo se usa el sub-bloque de la politica elegida.
+Define el espacio discreto de acciones. En esta version se exige exactamente 5 comandos.
 
-### `actions.random`
+Ejemplo recomendado:
 
-Politica de exploracion pura por muestreo aleatorio independiente en cada paso.
+1. `move 1`
+2. `turn -1`
+3. `turn 1`
+4. `jump 1`
+5. `move 0`
 
-| Variable | Tipo / opciones | Que cambia al modificarla | Notas |
-|---|---|---|---|
-| `move_min`, `move_max` | `float` | Amplian o reducen rango de avance/retroceso aleatorio. | Se usa `random.uniform(min, max)`. |
-| `turn_min`, `turn_max` | `float` | Amplian o reducen rango de giro aleatorio. | Se usa `random.uniform(min, max)`. |
-| `jump_probability` | `float` recomendado en `[0,1]` | A mayor valor, mas pasos con salto (`jump=1`). | Es un Bernoulli por paso. |
+| Variable | Tipo | Efecto |
+|---|---|---|
+| `actions.discrete` | `list[string]` de longitud `5` | Define `len(ACTIONS)` y el mapeo `action_id -> comando`. |
 
-Que significa `random` como estrategia:
+## Bloque `learning`
 
-- No usa observacion para decidir.
-- Cada paso se decide por azar.
-- Sirve para baseline/exploracion, no para control inteligente.
+Configura el aprendizaje Q-learning.
 
-### `actions.forward`
+Actualizacion por paso:
 
-Politica determinista: siempre devuelve la misma accion (salvo si usas `jump_probability` opcional).
+```text
+Q[s,a] += alpha * (reward + gamma * max(Q[s_next]) - Q[s,a])
+```
 
-| Variable | Tipo / opciones | Que cambia al modificarla | Notas |
-|---|---|---|---|
-| `move` | `float` | Velocidad de avance/retroceso constante. | En comandos continuos de Malmo, magnitud y signo importan. |
-| `turn` | `float` | Giro constante. | `0` mantiene rumbo, positivos/negativos giran en sentidos opuestos. |
-| `jump` | `float` usual `0` o `1` | Salto fijo por paso. | Solo se usa si `jump_probability` no esta definido. |
-| `jump_probability` (opcional) | `float` recomendado en `[0,1]` | Convierte el salto en probabilistico. | Si existe, tiene prioridad sobre `jump`. |
+Seleccion de accion (`epsilon`-greedy):
 
-Que significa `forward` como estrategia:
+1. Con probabilidad `epsilon`: explora (accion aleatoria).
+2. Si no: explota (`argmax Q[s]`).
 
-- Es una politica scriptada fija.
-- Util para pruebas controladas o para verificar conectividad.
-
-### `actions.explore`
-
-Politica hibrida: avance con ruido + giros periodicos fuertes.
-
-Mecanica exacta por paso:
-
-1. Si `step_count % turn_interval == 0`: no avanza (`move=0`) y gira fuerte (`turn` tomado de `turn_choices`).
-2. En el resto de pasos: avanza con `move` fijo y agrega jitter de giro uniforme entre `turn_jitter_min` y `turn_jitter_max`.
-3. El salto se resuelve con `_resolve_jump`: si hay `jump_probability`, manda; si no, usa `jump`.
-
-| Variable | Tipo / opciones | Que cambia al modificarla | Notas |
-|---|---|---|---|
-| `turn_interval` | `int` | Cada cuantos pasos ocurre giro fuerte. | El codigo aplica `max(1, int(valor))`. Si pones `0` o negativo, queda `1`. |
-| `turn_choices` | `list[float]` | Define giros fuertes posibles. | Si lista vacia/falsy, usa fallback `[-1.0, 1.0]`. |
-| `move` | `float` | Avance en pasos normales. | En pasos de giro fuerte no se usa (se fuerza `move=0`). |
-| `turn_jitter_min`, `turn_jitter_max` | `float` | Ancho del ruido de giro continuo. | Se usa `random.uniform(min, max)` en pasos normales. |
-| `jump` | `float` usual `0` o `1` | Salto fijo. | Solo aplica si no hay `jump_probability`. |
-| `jump_probability` (opcional) | `float` recomendado en `[0,1]` | Salto probabilistico por paso. | Si existe, reemplaza a `jump`. |
-
-Que significa `explore` como estrategia:
-
-- No planifica con observacion.
-- Recorre espacio con patron de avance y giros para cubrir terreno.
-- Es util para exploracion simple sin entrenamiento.
-
-## Como se interpreta `jump` y por que existe `jump_probability`
-
-En este proyecto, el agente es mayormente scriptado. `jump_probability` no es una "decision inteligente", sino un mecanismo de exploracion estocastica.
-
-Regla de prioridad en codigo:
-
-1. Si existe `jump_probability`, se clampa a `[0,1]` y el salto se decide por azar.
-2. Si no existe, se usa `jump` fijo.
-
-Esto aplica en `forward` y `explore`. En `random`, siempre es probabilistico.
+| Variable | Tipo | Efecto |
+|---|---|---|
+| `learning.alpha` | `float [0,1]` | Tasa de aprendizaje. |
+| `learning.gamma` | `float [0,1]` | Peso del valor futuro. |
+| `learning.epsilon` | `float [0,1]` | Probabilidad de exploracion. |
+| `learning.q_table_path` | `string path` | Archivo donde se carga/guarda la tabla Q. |
+| `learning.autosave_each_episode` | `bool` | Si `true`, guarda al final de cada episodio. |
 
 ## Bloque `termination`
 
-Define corte adicional por estado del agente (ademas de `done` del entorno y `max_steps`).
+| Variable | Tipo | Efecto |
+|---|---|---|
+| `termination.death_on_zero_life` | `bool` | Si `true`, termina cuando `Life <= min_life`. |
+| `termination.min_life` | `float` | Umbral de vida para terminar. |
 
-| Variable | Tipo / opciones | Que cambia al modificarla | Notas |
-|---|---|---|---|
-| `death_on_zero_life` | `true` / `false` | Activa o desactiva terminar por vida baja. | Si esta en `false`, el agente no corta por vida aunque caiga. |
-| `min_life` | `float` | Umbral de vida para considerar muerte (`Life <= min_life`). | Solo aplica si `death_on_zero_life` esta activo y la observacion trae campo `Life`. |
+## Relacion con Malmo
 
-## Relacion con Malmo (limites reales del "universo de posibilidades")
+`agent_params.yaml` define politica/aprendizaje, pero depende de la mision:
 
-`agent_params.yaml` no controla todo Malmo. Controla la politica local del agente dentro de lo que la mision habilita.
+1. La mision debe emitir observaciones necesarias (`XPos`, `ZPos`, `Yaw`, `floor5x5`, `Life`).
+2. La mision debe habilitar comandos coherentes con `actions.discrete`.
+3. El conector filtra acciones por raiz de comando (`move`, `turn`, `jump`, etc.).
 
-Puntos importantes:
+## Checklist rapido para iterar
 
-1. Los comandos disponibles dependen de la mision XML (`ContinuousMovementCommands`, etc.) y del `action_filter` del conector.
-2. Este conector usa por defecto `move`, `turn`, `jump`, `use`, `attack` en `action_filter`, pero `BasicAgent` solo emite `move`, `turn`, `jump`.
-3. Si el `action_space` es discreto, el conector transforma `{move,turn,jump}` a un comando Malmo cercano. Hay umbrales (`move/turn > 0.1`, `jump > 0.5`) y prioridad de seleccion.
-4. Si quieres nuevas capacidades (inventario, uso de items, ataque, navegacion por observacion), debes extender `BasicAgent` y/o crear nuevas politicas.
-
-## Checklist de diseno de politica
-
-Usa este checklist para ubicarse antes de cambiar parametros:
-
-1. Objetivo: explorar, llegar a un punto, evitar riesgos, testear conectividad.
-2. Politica base: `random`, `forward`, `explore` o nueva politica en codigo.
-3. Duracion: `episodes` y `max_steps`.
-4. Cadencia: `action_delay` segun velocidad deseada.
-5. Salto: fijo (`jump`) o estocastico (`jump_probability`).
-6. Terminacion: por vida (`death_on_zero_life`, `min_life`) si la mision reporta `Life`.
-7. Compatibilidad: verificar que la mision XML realmente habilite los comandos requeridos.
+1. Ajustar `state.position_bin_size` y `state.yaw_bins` para controlar tamano de estado.
+2. Mantener acciones discretas pequeñas al inicio (5 esta bien).
+3. Verificar `epsilon` alto para explorar al principio.
+4. Revisar `q_table_path` para no reutilizar una tabla incompatible de un estado viejo.
+5. Revisar `q_states` en el resumen final para detectar explosion de estados.
