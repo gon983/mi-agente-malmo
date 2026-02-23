@@ -49,6 +49,11 @@ learning:
   q_table_path: <string path>
   autosave_each_episode: <bool>
 
+reward:
+  mode: <"malmo" | "height_gain_only">
+  height_gain_scale: <float >= 0>
+  min_height_delta: <float >= 0>
+
 termination:
   death_on_zero_life: <bool>
   min_life: <float>
@@ -131,6 +136,16 @@ Seleccion de accion (`epsilon`-greedy):
 | `learning.epsilon` | `float [0,1]` | Probabilidad de exploracion. |
 | `learning.q_table_path` | `string path` | Archivo donde se carga/guarda la tabla Q. |
 | `learning.autosave_each_episode` | `bool` | Si `true`, guarda al final de cada episodio. |
+
+## Bloque `reward`
+
+Define la fuente de recompensa usada por Q-learning en `run_agent.py`.
+
+| Variable | Tipo | Efecto |
+|---|---|---|
+| `reward.mode` | `"malmo"` o `"height_gain_only"` | Selecciona entre recompensa nativa de mision o recompensa por subida de altura. |
+| `reward.height_gain_scale` | `float >= 0` | Multiplicador para ganancia de `Y` sobre el mejor `Y` previo del episodio. |
+| `reward.min_height_delta` | `float >= 0` | Umbral minimo de ganancia vertical para considerar recompensa (evita ruido). |
 
 ## Bloque `termination`
 

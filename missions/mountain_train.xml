@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Mission xmlns="http://ProjectMalmo.microsoft.com"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <About>
+    <Summary>Entrenamiento en montanas: recompensa solo por ganar altura.</Summary>
+  </About>
+
+  <ModSettings>
+    <MsPerTick>25</MsPerTick>
+  </ModSettings>
+
+  <ServerSection>
+    <ServerInitialConditions>
+      <Time>
+        <StartTime>6000</StartTime>
+        <AllowPassageOfTime>false</AllowPassageOfTime>
+      </Time>
+      <Weather>clear</Weather>
+      <AllowSpawning>false</AllowSpawning>
+    </ServerInitialConditions>
+
+    <ServerHandlers>
+      <DefaultWorldGenerator seed="mountain_train_v1" forceReset="true"/>
+      <ServerQuitFromTimeUp description="" timeLimitMs="120000"/>
+      <ServerQuitWhenAnyAgentFinishes/>
+    </ServerHandlers>
+  </ServerSection>
+
+  <AgentSection mode="Survival">
+    <Name>Agente</Name>
+    <AgentStart/>
+
+    <AgentHandlers>
+      <ContinuousMovementCommands turnSpeedDegs="180"/>
+      <MissionQuitCommands/>
+      <ObservationFromFullStats/>
+      <ObservationFromGrid>
+        <Grid name="floor5x5">
+          <min x="-2" y="-1" z="-2"/>
+          <max x="2" y="-1" z="2"/>
+        </Grid>
+      </ObservationFromGrid>
+      <ObservationFromRay/>
+      <VideoProducer want_depth="false">
+        <Width>320</Width>
+        <Height>240</Height>
+      </VideoProducer>
+    </AgentHandlers>
+  </AgentSection>
+</Mission>

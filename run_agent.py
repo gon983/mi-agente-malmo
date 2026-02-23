@@ -143,10 +143,47 @@ def parse_observation(
     return parsed
 
 
+def _to_float(value: Any) -> Optional[float]:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _compute_training_reward(
+    reward_mode: str,
+    env_reward: float,
+    next_obs: Dict[str, Any],
+    height_gain_scale: float,
+    min_height_delta: float,
+    best_y: Optional[float],
+) -> tuple[float, Optional[float]]:
+    if reward_mode == "malmo":
+        return float(env_reward), best_y
+
+    if reward_mode == "height_gain_only":
+        next_y = _to_float(next_obs.get("YPos"))
+        if next_y is None:
+            return 0.0, best_y
+
+        if best_y is None:
+            return 0.0, next_y
+
+        delta = next_y - best_y
+        if delta <= min_height_delta:
+            return 0.0, best_y
+        return delta * height_gain_scale, next_y
+
+    raise ValueError(f"Unsupported reward mode: {reward_mode}")
+
+
 def run_episode(
     connector: MalmoConnector,
     agent: BasicAgent,
-    max_steps: int = 100,
+    max_steps: int,
+    reward_mode: str,
+    height_gain_scale: float,
+    min_height_delta: float,
     viewer: Optional[Any] = None,
 ) -> Dict[str, Any]:
     """
@@ -158,6 +195,7 @@ def run_episode(
     step = 0
     frame_shape = getattr(getattr(connector, "observation_space", None), "shape", None)
     last_known: Dict[str, Any] = {}
+    best_y: Optional[float] = None
 
     tracked_keys = [
         "XPos",
@@ -176,6 +214,9 @@ def run_episode(
 
     while not done and step < max_steps:
         obs_dict = parse_observation(obs, frame_shape=frame_shape)
+        for key, value in last_known.items():
+            obs_dict.setdefault(key, value)
+
         action = agent.get_action(obs_dict)
 
         obs, reward, done, info = connector.step(action)
@@ -192,7 +233,14 @@ def run_episode(
         if agent.should_terminate():
             done = True
 
-        reward_value = float(reward)
+        reward_value, best_y = _compute_training_reward(
+            reward_mode=reward_mode,
+            env_reward=float(reward),
+            next_obs=next_obs,
+            height_gain_scale=height_gain_scale,
+            min_height_delta=min_height_delta,
+            best_y=best_y,
+        )
         agent.process_reward(reward_value, next_observation=next_obs, done=done)
 
         step += 1
@@ -258,6 +306,7 @@ def main() -> None:
     behavior_cfg = _require_mapping(agent_params, "behavior", "agent_params")
     run_cfg = _require_mapping(agent_params, "run", "agent_params")
     actions_cfg = _require_mapping(agent_params, "actions", "agent_params")
+    reward_cfg = _require_mapping(agent_params, "reward", "agent_params")
     discrete_actions = _require_list(actions_cfg, "discrete", "agent_params.actions")
 
     if args.port is not None:
@@ -288,6 +337,11 @@ def main() -> None:
     policy = _require_str(behavior_cfg, "policy", "agent_params.behavior")
     if policy != "explore":
         raise ValueError("Only 'explore' policy is supported.")
+    reward_mode = _require_str(reward_cfg, "mode", "agent_params.reward")
+    if reward_mode not in {"malmo", "height_gain_only"}:
+        raise ValueError("agent_params.reward.mode must be 'malmo' or 'height_gain_only'")
+    height_gain_scale = _require_float(reward_cfg, "height_gain_scale", "agent_params.reward", min_value=0.0)
+    min_height_delta = _require_float(reward_cfg, "min_height_delta", "agent_params.reward", min_value=0.0)
 
     host = _require_str(world_server, "host", "world_rules.world.server")
     port = _require_int(world_server, "port", "world_rules.world.server", min_value=1)
@@ -311,6 +365,7 @@ def main() -> None:
     print(f"policy        : {policy}")
     print(f"episodes      : {episodes}")
     print(f"max_steps     : {max_steps}")
+    print(f"reward_mode   : {reward_mode}")
     print(f"viewer        : {args.viewer}")
     print(f"world_rules   : {world_rules_path}")
     print(f"agent_params  : {agent_params_path}")
@@ -365,7 +420,15 @@ def main() -> None:
             else:
                 print(f"\nEpisode {episode}/{episodes}")
 
-            stats = run_episode(connector, agent, max_steps=max_steps, viewer=viewer)
+            stats = run_episode(
+                connector,
+                agent,
+                max_steps=max_steps,
+                reward_mode=reward_mode,
+                height_gain_scale=height_gain_scale,
+                min_height_delta=min_height_delta,
+                viewer=viewer,
+            )
             all_stats.append(stats)
 
             if agent.autosave_each_episode:
